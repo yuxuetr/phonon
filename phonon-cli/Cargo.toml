@@ -1,0 +1,14 @@
+[package]
+name = "phonon-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+phonon-core = { path = "../phonon-core", version = "0.1.0" }
+phonon-wav = { path = "../phonon-wav", version = "0.1.0" }
+phonon-engine = { path = "../phonon-engine", version = "0.1.0" }
+clap = { version = "4.4", features = ["derive"] }
+anyhow = "1.0"

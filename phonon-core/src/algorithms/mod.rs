@@ -1,0 +1,21 @@
+pub mod trim;
+pub mod mix;
+pub mod normalize;
+pub mod fade;
+pub mod merge;
+pub mod resample;
+pub mod channels;
+pub mod filters;
+pub mod spectrum;
+pub mod speed;
+
+pub use trim::trim;
+pub use mix::mix;
+pub use normalize::normalize;
+pub use fade::{fade_in, fade_out};
+pub use merge::merge;
+pub use resample::resample;
+pub use channels::ensure_channels;
+pub use filters::{filter, FilterType};
+pub use spectrum::compute_spectrum;
+pub use speed::change_speed;
