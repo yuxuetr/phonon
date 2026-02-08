@@ -19,6 +19,81 @@ struct LoadedAudio {
     channels: u16,
     duration: f64,
     sample_count: usize,
+    samples: Vec<f32>,
+}
+
+/// Downsamples audio data for visualization
+fn generate_waveform_path(samples: &[f32], channels: u16, width: f32, height: f32) -> String {
+    if samples.is_empty() {
+        return String::new();
+    }
+
+    let samples_per_pixel = (samples.len() as f32 / width).ceil() as usize;
+    let step = samples_per_pixel.max(1);
+    let mid_y = height / 2.0;
+    let scale_y = height / 2.0;
+
+    let mut path = String::new();
+    path.push_str(&format!("M 0 {}", mid_y));
+
+    // Simple peak finding for each pixel bucket
+    for x in 0..width as usize {
+        let start = x * step;
+        let end = (start + step).min(samples.len());
+        
+        if start >= samples.len() {
+            break;
+        }
+
+        // Find min and max in this chunk to draw a vertical line or envelope
+        // For simplicity in this version, we'll just take the max absolute value (envelope)
+        // and draw a line to it and back to negative.
+        // Actually, let's draw a single line from -peak to +peak for each pixel x.
+        // But SVG path "L" connects points.
+        // A common simple waveform viz is just connecting the peaks.
+        
+        let mut max_val = 0.0f32;
+        for i in start..end {
+             if let Some(s) = samples.get(i) {
+                 let abs = s.abs();
+                 if abs > max_val {
+                     max_val = abs;
+                 }
+             }
+        }
+
+        // We can draw a line from mid_y - (max * scale) to mid_y + (max * scale) at x?
+        // SVG paths are usually continuous.
+        // Let's draw the upper envelope first, then we could close it.
+        // For a simple "line" look:
+        let y = mid_y - (max_val * scale_y);
+        path.push_str(&format!(" L {} {:.2}", x, y));
+    }
+    
+    // Mirror for the bottom half to make it look like a waveform
+    for x in (0..width as usize).rev() {
+         let start = x * step;
+         let end = (start + step).min(samples.len());
+         
+         if start >= samples.len() {
+            continue;
+         }
+
+         let mut max_val = 0.0f32;
+         for i in start..end {
+              if let Some(s) = samples.get(i) {
+                  let abs = s.abs();
+                  if abs > max_val {
+                      max_val = abs;
+                  }
+              }
+         }
+         let y = mid_y + (max_val * scale_y);
+         path.push_str(&format!(" L {} {:.2}", x, y));
+    }
+
+    path.push_str(" Z"); // Close path
+    path
 }
 
 fn App() -> Element {
@@ -32,7 +107,7 @@ fn App() -> Element {
             p { "Audio Processing Workbench" }
             
             div {
-                style: "margin-top: 20px; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); width: 400px; text-align: center;",
+                style: "margin-top: 20px; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); width: 800px; text-align: center;",
                 
                 button {
                     style: "padding: 10px 20px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px;",
@@ -57,6 +132,7 @@ fn App() -> Element {
                                             channels: buffer.channels,
                                             duration: buffer.duration_secs(),
                                             sample_count: buffer.samples.len(),
+                                            samples: buffer.samples,
                                         }));
                                         status_msg.set("File loaded successfully".to_string());
                                     }
@@ -79,13 +155,33 @@ fn App() -> Element {
 
                 if let Some(info) = audio_state() {
                     div {
-                        style: "margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; text-align: left;",
-                        h3 { "File Info" }
-                        p { strong { "Path: " } "{info.path}" }
-                        p { strong { "Sample Rate: " } "{info.sample_rate} Hz" }
-                        p { strong { "Channels: " } "{info.channels}" }
-                        p { strong { "Duration: " } "{info.duration:.2} seconds" }
-                        p { strong { "Samples: " } "{info.sample_count}" }
+                        style: "margin-top: 20px; width: 100%;",
+                        
+                        // Waveform Visualization
+                        div {
+                            style: "background: #333; border-radius: 4px; padding: 10px; margin-bottom: 20px;",
+                            svg {
+                                width: "600",
+                                height: "150",
+                                view_box: "0 0 600 150",
+                                path {
+                                    d: "{generate_waveform_path(&info.samples, info.channels, 600.0, 150.0)}",
+                                    stroke: "#00ff88",
+                                    fill: "#00ff88",
+                                    stroke_width: "1"
+                                }
+                            }
+                        }
+
+                        div {
+                            style: "padding-top: 20px; border-top: 1px solid #eee; text-align: left;",
+                            h3 { "File Info" }
+                            p { strong { "Path: " } "{info.path}" }
+                            p { strong { "Sample Rate: " } "{info.sample_rate} Hz" }
+                            p { strong { "Channels: " } "{info.channels}" }
+                            p { strong { "Duration: " } "{info.duration:.2} seconds" }
+                            p { strong { "Samples: " } "{info.sample_count}" }
+                        }
                     }
                 }
             }
