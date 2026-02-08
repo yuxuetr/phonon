@@ -115,11 +115,14 @@ enum Commands {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Initialize logging
+    tracing_subscriber::fmt::init();
+    
     let cli = Cli::parse();
 
     match &cli.command {
         Commands::Info { file } => {
-            let buffer = phonon_wav::read_wav(file)?;
+            let buffer = phonon_io::read_audio(file)?;
             println!("File: {:?}", file);
             println!("Duration: {:.2}s", buffer.duration_secs());
             println!("Sample Rate: {} Hz", buffer.sample_rate);
@@ -127,7 +130,7 @@ fn main() -> anyhow::Result<()> {
             println!("Samples: {}", buffer.samples.len());
         }
         Commands::Play { file } => {
-            let buffer = phonon_wav::read_wav(file)?;
+            let buffer = phonon_io::read_audio(file)?;
             println!("Playing {:?} ({:.2}s)...", file, buffer.duration_secs());
             
             let player = AudioPlayer::new()?;
@@ -159,20 +162,20 @@ fn main() -> anyhow::Result<()> {
             println!("Done.");
         }
         Commands::Trim { input, output, start, end } => {
-            let buffer = phonon_wav::read_wav(input)?;
+            let buffer = phonon_io::read_audio(input)?;
             let trimmed = algorithms::trim(&buffer, *start, *end)?;
             phonon_wav::write_wav(output, &trimmed)?;
             println!("Trimmed audio saved to {:?}", output);
         }
         Commands::Mix { input1, input2, output } => {
-            let b1 = phonon_wav::read_wav(input1)?;
-            let b2 = phonon_wav::read_wav(input2)?;
+            let b1 = phonon_io::read_audio(input1)?;
+            let b2 = phonon_io::read_audio(input2)?;
             let mixed = algorithms::mix(&b1, &b2)?;
             phonon_wav::write_wav(output, &mixed)?;
             println!("Mixed audio saved to {:?}", output);
         }
         Commands::Normalize { input, output, target } => {
-            let mut buffer = phonon_wav::read_wav(input)?;
+            let mut buffer = phonon_io::read_audio(input)?;
             algorithms::normalize(&mut buffer, *target);
             phonon_wav::write_wav(output, &buffer)?;
             println!("Normalized audio saved to {:?}", output);
@@ -199,13 +202,13 @@ fn main() -> anyhow::Result<()> {
             println!("Generated {}s sine wave at {}Hz to {:?}", duration, freq, output);
         }
         Commands::Filter { input, output, type_, cutoff, q_value, gain } => {
-            let mut buffer = phonon_wav::read_wav(input)?;
+            let mut buffer = phonon_io::read_audio(input)?;
             algorithms::filter(&mut buffer, (*type_).into(), *cutoff, *q_value, *gain)?;
             phonon_wav::write_wav(output, &buffer)?;
             println!("Applied {:?} filter at {}Hz to {:?}", type_, cutoff, output);
         }
         Commands::Speed { input, output, factor } => {
-            let buffer = phonon_wav::read_wav(input)?;
+            let buffer = phonon_io::read_audio(input)?;
             let new_buffer = algorithms::change_speed(&buffer, *factor)?;
             phonon_wav::write_wav(output, &new_buffer)?;
             println!("Changed speed by factor {} to {:?}", factor, output);

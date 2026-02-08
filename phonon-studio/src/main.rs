@@ -119,7 +119,7 @@ fn App() -> Element {
                         async move {
                             status_msg.set("Opening file dialog...".to_string());
                             if let Some(path) = rfd::AsyncFileDialog::new()
-                                .add_filter("WAV Audio", &["wav"])
+                                .add_filter("Audio", &["wav", "mp3", "flac", "ogg", "aac", "m4a"])
                                 .pick_file()
                                 .await 
                             {
@@ -128,7 +128,7 @@ fn App() -> Element {
                                 
                                 let path_str = path_buf.to_string_lossy().to_string();
                                 
-                                match phonon_wav::read_wav(&path_buf) {
+                                match phonon_io::read_audio(&path_buf) {
                                     Ok(buffer) => {
                                         audio_state.set(Some(LoadedAudio {
                                             path: path_str,

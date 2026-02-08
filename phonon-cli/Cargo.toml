@@ -9,6 +9,9 @@ repository.workspace = true
 [dependencies]
 phonon-core = { path = "../phonon-core", version = "0.1.0" }
 phonon-wav = { path = "../phonon-wav", version = "0.1.0" }
+phonon-io = { path = "../phonon-io", version = "0.1.0" }
 phonon-engine = { path = "../phonon-engine", version = "0.1.0" }
 clap = { version = "4.4", features = ["derive"] }
 anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

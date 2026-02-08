@@ -10,6 +10,7 @@ repository.workspace = true
 dioxus = { version = "0.7", features = ["desktop"] }
 dioxus-logger = "0.7"
 phonon-wav = { path = "../phonon-wav" }
+phonon-io = { path = "../phonon-io" }
 phonon-core = { path = "../phonon-core" }
 phonon-engine = { path = "../phonon-engine" }
 rfd = "0.15"

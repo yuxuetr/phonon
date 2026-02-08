@@ -1,0 +1,13 @@
+[package]
+name = "phonon-io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+phonon-core = { path = "../phonon-core", version = "0.1.0" }
+thiserror = "1.0"
+tracing = "0.1"
+symphonia = { version = "0.5", features = ["all"] }
