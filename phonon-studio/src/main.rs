@@ -2,6 +2,9 @@
 
 use dioxus::prelude::*;
 use dioxus_logger::tracing;
+use phonon_core::{AudioBuffer, PhononError, Result};
+use phonon_engine::AudioPlayer;
+use std::path::PathBuf;
 
 fn main() {
     // Init logger
@@ -99,6 +102,7 @@ fn generate_waveform_path(samples: &[f32], channels: u16, width: f32, height: f3
 fn App() -> Element {
     let mut audio_state = use_signal(|| None::<LoadedAudio>);
     let mut status_msg = use_signal(|| "Ready".to_string());
+    let mut player_state = use_signal(|| None::<AudioPlayer>);
 
     rsx! {
         div {
@@ -170,6 +174,53 @@ fn App() -> Element {
                                     fill: "#00ff88",
                                     stroke_width: "1"
                                 }
+                            }
+                        }
+
+                        // Playback Controls
+                        div {
+                            style: "display: flex; gap: 10px; margin-bottom: 20px; justify-content: center;",
+                            button {
+                                style: "padding: 8px 16px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;",
+                                onclick: move |_| {
+                                    // Check if player exists, if not create it
+                                    if player_state.read().is_none() {
+                                        match AudioPlayer::new() {
+                                            Ok(p) => player_state.set(Some(p)),
+                                            Err(e) => {
+                                                status_msg.set(format!("Failed to init audio: {}", e));
+                                                return;
+                                            }
+                                        }
+                                    }
+
+                                    // Play audio
+                                    if let Some(player) = player_state.read().as_ref() {
+                                        // Reconstruct AudioBuffer from state
+                                        let buffer = AudioBuffer {
+                                            samples: info.samples.clone(),
+                                            sample_rate: info.sample_rate,
+                                            channels: info.channels,
+                                        };
+                                        
+                                        match player.play(&buffer) {
+                                            Ok(_) => status_msg.set("Playing...".to_string()),
+                                            Err(e) => status_msg.set(format!("Playback error: {}", e)),
+                                        }
+                                    }
+                                },
+                                "Play"
+                            }
+                            
+                            button {
+                                style: "padding: 8px 16px; background-color: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;",
+                                onclick: move |_| {
+                                    if let Some(player) = player_state.read().as_ref() {
+                                        player.clear();
+                                        status_msg.set("Stopped".to_string());
+                                    }
+                                },
+                                "Stop"
                             }
                         }
 
