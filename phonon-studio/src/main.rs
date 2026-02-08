@@ -2,7 +2,7 @@
 
 use dioxus::prelude::*;
 use dioxus_logger::tracing;
-use phonon_core::{AudioBuffer, PhononError, Result};
+use phonon_core::{algorithms, AudioBuffer, PhononError, Result};
 use phonon_engine::AudioPlayer;
 use std::path::PathBuf;
 
@@ -197,11 +197,37 @@ fn App() -> Element {
                                     // Play audio
                                     if let Some(player) = player_state.read().as_ref() {
                                         // Reconstruct AudioBuffer from state
-                                        let buffer = AudioBuffer {
+                                        let mut buffer = AudioBuffer {
                                             samples: info.samples.clone(),
                                             sample_rate: info.sample_rate,
                                             channels: info.channels,
                                         };
+
+                                        // Auto-convert sample rate if needed
+                                        let device_rate = player.device_sample_rate();
+                                        if buffer.sample_rate != device_rate {
+                                            status_msg.set(format!("Resampling {}Hz -> {}Hz...", buffer.sample_rate, device_rate));
+                                            match algorithms::resample(&buffer, device_rate) {
+                                                Ok(b) => buffer = b,
+                                                Err(e) => {
+                                                    status_msg.set(format!("Resample error: {}", e));
+                                                    return;
+                                                }
+                                            }
+                                        }
+
+                                        // Auto-convert channels if needed
+                                        let device_channels = player.device_channels();
+                                        if buffer.channels != device_channels {
+                                            status_msg.set(format!("Converting channels {} -> {}...", buffer.channels, device_channels));
+                                            match algorithms::ensure_channels(&buffer, device_channels) {
+                                                Ok(b) => buffer = b,
+                                                Err(e) => {
+                                                    status_msg.set(format!("Channel conversion error: {}", e));
+                                                    return;
+                                                }
+                                            }
+                                        }
                                         
                                         match player.play(&buffer) {
                                             Ok(_) => status_msg.set("Playing...".to_string()),
