@@ -6,164 +6,6 @@ use phonon_core::{algorithms, AudioBuffer, PhononError, Result};
 use phonon_engine::AudioPlayer;
 use std::path::PathBuf;
 
-// --- CSS Styles ---
-const STYLE: &str = r#"
-    :root {
-        --bg-color: #1e1e1e;
-        --panel-bg: #252526;
-        --header-bg: #333333;
-        --text-primary: #e0e0e0;
-        --text-secondary: #aaaaaa;
-        --accent-color: #00ff88;
-        --button-primary-bg: #007acc;
-        --button-danger-bg: #d94040;
-        --border-color: #3e3e42;
-    }
-
-    body {
-        margin: 0;
-        padding: 0;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-        background-color: var(--bg-color);
-        color: var(--text-primary);
-        height: 100vh;
-        overflow: hidden;
-    }
-
-    .app-container {
-        display: flex;
-        flex-direction: column;
-        height: 100vh;
-    }
-
-    /* Header */
-    .header {
-        background-color: var(--header-bg);
-        padding: 10px 20px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        border-bottom: 1px solid var(--border-color);
-    }
-
-    .logo {
-        font-weight: bold;
-        font-size: 1.2rem;
-        color: var(--text-primary);
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-
-    .toolbar {
-        display: flex;
-        gap: 10px;
-    }
-
-    /* Main Workspace */
-    .workspace {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 20px;
-        overflow-y: auto;
-    }
-
-    .empty-state {
-        text-align: center;
-        color: var(--text-secondary);
-    }
-
-    .waveform-container {
-        width: 100%;
-        max-width: 1000px;
-        background-color: var(--panel-bg);
-        border: 1px solid var(--border-color);
-        border-radius: 6px;
-        padding: 20px;
-        margin-bottom: 20px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-    }
-
-    .info-panel {
-        background-color: var(--panel-bg);
-        padding: 15px;
-        border-radius: 6px;
-        border: 1px solid var(--border-color);
-        width: 100%;
-        max-width: 1000px;
-        margin-top: 20px;
-    }
-
-    .info-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 15px;
-    }
-
-    .info-item label {
-        display: block;
-        font-size: 0.8rem;
-        color: var(--text-secondary);
-        margin-bottom: 4px;
-    }
-
-    .info-item span {
-        font-weight: 500;
-    }
-
-    /* Footer / Transport */
-    .footer {
-        background-color: var(--panel-bg);
-        padding: 10px 20px;
-        border-top: 1px solid var(--border-color);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-    }
-
-    .transport-controls {
-        display: flex;
-        gap: 15px;
-    }
-
-    .status-bar {
-        font-size: 0.9rem;
-        color: var(--text-secondary);
-    }
-
-    /* Buttons */
-    .btn {
-        padding: 8px 16px;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        font-weight: 500;
-        transition: background-color 0.2s;
-        color: white;
-        background-color: #444;
-    }
-
-    .btn:hover {
-        opacity: 0.9;
-    }
-
-    .btn-primary {
-        background-color: var(--button-primary-bg);
-    }
-
-    .btn-danger {
-        background-color: var(--button-danger-bg);
-    }
-    
-    .btn-icon {
-        padding: 8px 12px;
-        font-size: 1.2rem;
-    }
-"#;
-
 fn main() {
     // Init logger
     if let Err(e) = dioxus_logger::init(tracing::Level::INFO) {
@@ -251,19 +93,20 @@ fn App() -> Element {
     let mut status_msg = use_signal(|| "Ready".to_string());
     let mut player_state = use_signal(|| None::<AudioPlayer>);
 
+    // Configure Tailwind via Dioxus.toml and input.css, so we don't need inline styles here.
+    
     rsx! {
-        style { "{STYLE}" }
         div {
-            class: "app-container",
+            class: "flex flex-col h-screen bg-neutral-900 text-gray-200 font-sans overflow-hidden",
             
             // --- Header ---
             header {
-                class: "header",
-                div { class: "logo", "🎛️ Phonon Studio" }
+                class: "bg-neutral-800 p-4 flex items-center justify-between border-b border-neutral-700",
+                div { class: "font-bold text-xl text-gray-100 flex items-center gap-2", "🎛️ Phonon Studio" }
                 div {
-                    class: "toolbar",
+                    class: "flex gap-2",
                     button {
-                        class: "btn btn-primary",
+                        class: "px-4 py-2 rounded shadow transition hover:opacity-90 bg-blue-600 text-white font-medium",
                         onclick: move |_| {
                             async move {
                                 status_msg.set("Opening file dialog...".to_string());
@@ -302,12 +145,12 @@ fn App() -> Element {
 
             // --- Main Workspace ---
             main {
-                class: "workspace",
+                class: "flex-1 flex flex-col items-center justify-center p-6 overflow-y-auto",
                 
                 if let Some(info) = audio_state() {
                     // Waveform View
                     div {
-                        class: "waveform-container",
+                        class: "w-full max-w-5xl bg-neutral-800 border border-neutral-700 rounded-lg p-5 mb-5 shadow-lg",
                         svg {
                             width: "100%",
                             height: "200",
@@ -315,8 +158,7 @@ fn App() -> Element {
                             preserve_aspect_ratio: "none",
                             path {
                                 d: "{generate_waveform_path(&info.samples, info.channels, 1000.0, 200.0)}",
-                                stroke: "var(--accent-color)",
-                                fill: "var(--accent-color)",
+                                class: "stroke-emerald-400 fill-emerald-400",
                                 stroke_width: "1",
                                 vector_effect: "non-scaling-stroke"
                             }
@@ -325,20 +167,20 @@ fn App() -> Element {
 
                     // Info Panel
                     div {
-                        class: "info-panel",
-                        div { class: "info-grid",
-                            div { class: "info-item", label { "File Path" } span { "{info.path}" } }
-                            div { class: "info-item", label { "Sample Rate" } span { "{info.sample_rate} Hz" } }
-                            div { class: "info-item", label { "Channels" } span { "{info.channels}" } }
-                            div { class: "info-item", label { "Duration" } span { "{info.duration:.2}s" } }
-                            div { class: "info-item", label { "Samples" } span { "{info.sample_count}" } }
+                        class: "bg-neutral-800 p-4 rounded-lg border border-neutral-700 w-full max-w-5xl mt-5",
+                        div { class: "grid grid-cols-2 md:grid-cols-4 gap-4",
+                            div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "File Path" } span { class: "font-medium truncate", "{info.path}" } }
+                            div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "Sample Rate" } span { class: "font-medium", "{info.sample_rate} Hz" } }
+                            div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "Channels" } span { class: "font-medium", "{info.channels}" } }
+                            div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "Duration" } span { class: "font-medium", "{info.duration:.2}s" } }
+                            div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "Samples" } span { class: "font-medium", "{info.sample_count}" } }
                         }
                     }
                 } else {
                     // Empty State
                     div {
-                        class: "empty-state",
-                        h2 { "No Audio Loaded" }
+                        class: "text-center text-gray-500",
+                        h2 { class: "text-2xl font-bold mb-2", "No Audio Loaded" }
                         p { "Click 'Open Audio File' to start editing." }
                     }
                 }
@@ -346,12 +188,12 @@ fn App() -> Element {
 
             // --- Footer / Transport ---
             footer {
-                class: "footer",
+                class: "bg-neutral-800 p-4 border-t border-neutral-700 flex items-center justify-between",
                 
                 div {
-                    class: "transport-controls",
+                    class: "flex gap-4",
                     button {
-                        class: "btn btn-icon",
+                        class: "px-3 py-2 rounded shadow transition hover:opacity-90 bg-neutral-700 text-white text-xl",
                         title: "Play",
                         onclick: move |_| {
                             // Init player if needed
@@ -397,7 +239,7 @@ fn App() -> Element {
                         "▶"
                     }
                     button {
-                        class: "btn btn-icon btn-danger",
+                        class: "px-3 py-2 rounded shadow transition hover:opacity-90 bg-red-600 text-white text-xl",
                         title: "Stop",
                         onclick: move |_| {
                             if let Some(player) = player_state.read().as_ref() {
@@ -410,7 +252,7 @@ fn App() -> Element {
                 }
 
                 div {
-                    class: "status-bar",
+                    class: "text-sm text-gray-500",
                     "{status_msg}"
                 }
             }
