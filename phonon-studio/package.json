@@ -1,0 +1,20 @@
+{
+  "name": "phonon-studio",
+  "version": "1.0.0",
+  "description": "Desktop audio processing application built with Dioxus.",
+  "main": "tailwind.config.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "dev": "npx @tailwindcss/cli -i ./assets/input.css -o ./assets/tailwind.css --watch",
+    "build": "npx @tailwindcss/cli -i ./assets/input.css -o ./assets/tailwind.css"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@tailwindcss/cli": "^4.1.18",
+    "tailwindcss": "^4.1.18"
+  }
+}

@@ -4,6 +4,3 @@ default_platform = "desktop"
 
 [web.app]
 title = "Phonon Studio"
-
-[web.resource]
-style = ["tailwind.css"]
