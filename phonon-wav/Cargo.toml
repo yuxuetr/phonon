@@ -12,3 +12,4 @@ description = "WAV audio file processing library for Phonon"
 phonon-core = { path = "../phonon-core", version = "0.1.0" }
 hound = "3.5"
 thiserror = "1.0"
+tracing = "0.1"

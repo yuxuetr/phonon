@@ -3,6 +3,7 @@ use crossbeam_queue::SegQueue;
 use phonon_core::AudioBuffer;
 use std::sync::Arc;
 use thiserror::Error;
+use tracing::{info, warn, error, instrument};
 
 #[derive(Error, Debug)]
 pub enum EngineError {
@@ -24,6 +25,7 @@ pub struct AudioPlayer {
 }
 
 impl AudioPlayer {
+    #[instrument]
     pub fn new() -> Result<Self> {
         let host = cpal::default_host();
         let device = host
@@ -36,11 +38,12 @@ impl AudioPlayer {
 
         let sample_rate = config.sample_rate().0;
         let channels = config.channels();
+        info!(sample_rate, channels, "Initialized audio device");
 
         let queue = Arc::new(SegQueue::new());
         let queue_clone = queue.clone();
 
-        let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
+        let err_fn = |err| error!("an error occurred on stream: {}", err);
 
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => device.build_output_stream(
@@ -69,6 +72,7 @@ impl AudioPlayer {
     ///
     /// Note: Currently requires the input buffer to match the device's sample rate and channel count.
     /// If they don't match, this function returns an error.
+    #[instrument(skip(self, buffer), fields(buffer_duration = buffer.duration_secs()))]
     pub fn play(&self, buffer: &AudioBuffer) -> Result<()> {
         if buffer.sample_rate != self.device_sample_rate {
             return Err(EngineError::Config(format!(
@@ -84,6 +88,7 @@ impl AudioPlayer {
             )));
         }
 
+        info!("Queueing audio for playback");
         for &sample in &buffer.samples {
             self.queue.push(sample);
         }

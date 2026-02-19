@@ -1,4 +1,5 @@
 use crate::{AudioBuffer, PhononError, Result};
+use tracing::instrument;
 
 /// Mixes two audio buffers together.
 ///
@@ -15,6 +16,7 @@ use crate::{AudioBuffer, PhononError, Result};
 /// # Errors
 ///
 /// Returns an error if sample rates or channel counts do not match.
+#[instrument(skip(buffer1, buffer2))]
 pub fn mix(buffer1: &AudioBuffer, buffer2: &AudioBuffer) -> Result<AudioBuffer> {
     if buffer1.sample_rate != buffer2.sample_rate {
         return Err(PhononError::InvalidSampleRate(buffer2.sample_rate)); // Simplify for now

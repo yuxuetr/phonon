@@ -1,5 +1,6 @@
 use phonon_core::{AudioBuffer, PhononError, Result};
 use std::path::Path;
+use tracing::{info, debug, instrument};
 
 /// Read a WAV file into an AudioBuffer.
 ///
@@ -7,10 +8,13 @@ use std::path::Path;
 /// Currently supports:
 /// - 16-bit Integer PCM
 /// - 32-bit Float PCM
+#[instrument(skip(path), fields(path = %path.as_ref().display()))]
 pub fn read_wav<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
-    let mut reader = hound::WavReader::open(path)
+    info!("Reading WAV file");
+    let mut reader = hound::WavReader::open(&path)
         .map_err(|e| PhononError::Wav(format!("Failed to open file: {}", e)))?;
     let spec = reader.spec();
+    debug!(?spec, "WAV spec");
 
     let samples: Vec<f32> = match spec.sample_format {
         hound::SampleFormat::Float => {
@@ -38,6 +42,8 @@ pub fn read_wav<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
         }
     };
 
+    info!(samples = samples.len(), "Loaded samples");
+
     Ok(AudioBuffer {
         samples,
         sample_rate: spec.sample_rate,
@@ -49,7 +55,9 @@ pub fn read_wav<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
 ///
 /// Currently writes as 16-bit Integer PCM.
 /// Samples are clamped to `[-1.0, 1.0]` before conversion to prevent wrapping.
+#[instrument(skip(buffer, path), fields(path = %path.as_ref().display(), duration = buffer.duration_secs()))]
 pub fn write_wav<P: AsRef<Path>>(path: P, buffer: &AudioBuffer) -> Result<()> {
+    info!("Writing WAV file");
     let spec = hound::WavSpec {
         channels: buffer.channels,
         sample_rate: buffer.sample_rate,
@@ -72,6 +80,8 @@ pub fn write_wav<P: AsRef<Path>>(path: P, buffer: &AudioBuffer) -> Result<()> {
     writer
         .finalize()
         .map_err(|e| PhononError::Wav(format!("Finalize error: {}", e)))?;
+    
+    info!("Write complete");
     Ok(())
 }
 
