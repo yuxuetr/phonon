@@ -46,6 +46,11 @@ pub struct PipelineConfig {
     /// Fade-out duration at the end of the episode in seconds.
     #[serde(default = "default_fade_out")]
     pub fade_out_secs: f64,
+
+    /// Maximum number of concurrent TTS synthesis tasks.
+    /// Set to 1 for sequential processing. Default: 4.
+    #[serde(default = "default_tts_concurrency")]
+    pub tts_concurrency: usize,
 }
 
 fn default_pause() -> f64 {
@@ -72,6 +77,9 @@ fn default_fade_in() -> f64 {
 fn default_fade_out() -> f64 {
     0.0
 }
+fn default_tts_concurrency() -> usize {
+    4
+}
 
 impl Default for PipelineConfig {
     fn default() -> Self {
@@ -87,6 +95,7 @@ impl Default for PipelineConfig {
             normalize_target: default_normalize_target(),
             fade_in_secs: default_fade_in(),
             fade_out_secs: default_fade_out(),
+            tts_concurrency: default_tts_concurrency(),
         }
     }
 }
@@ -105,6 +114,7 @@ mod tests {
         assert!((config.normalize_target - 0.95).abs() < f32::EPSILON);
         assert!(config.intro_audio.is_none());
         assert!(config.bgm_audio.is_none());
+        assert_eq!(config.tts_concurrency, 4);
     }
 
     #[test]
@@ -116,5 +126,13 @@ mod tests {
         // Defaults for unspecified fields
         assert_eq!(config.output_sample_rate, 44100);
         assert!((config.normalize_target - 0.95).abs() < f32::EPSILON);
+        assert_eq!(config.tts_concurrency, 4);
+    }
+
+    #[test]
+    fn test_config_serde_with_concurrency() {
+        let json = r#"{"tts_concurrency": 8}"#;
+        let config: PipelineConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.tts_concurrency, 8);
     }
 }

@@ -13,6 +13,10 @@ pub use algorithms::speed::change_speed;
 pub use algorithms::silence::silence;
 pub use algorithms::volume::{adjust_volume, with_volume};
 pub use algorithms::crossfade::crossfade;
+pub use algorithms::overlay::overlay_at_position;
+pub use algorithms::reverse::reverse;
+pub use algorithms::repeat::repeat;
+pub use algorithms::loudness::{dbfs, rms, peak, peak_dbfs, adjust_volume_db, with_volume_db};
 
 use thiserror::Error;
 

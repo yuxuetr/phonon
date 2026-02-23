@@ -24,10 +24,12 @@
 //! ```
 
 pub mod client;
+pub mod edge_tts;
 pub mod tts;
 pub mod voice;
 
 pub use client::HttpClient;
+pub use edge_tts::EdgeTts;
 pub use tts::{OpenAiTts, TtsProvider};
 pub use voice::VoiceConfig;
 

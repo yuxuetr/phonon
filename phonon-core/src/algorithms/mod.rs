@@ -11,6 +11,10 @@ pub mod speed;
 pub mod silence;
 pub mod volume;
 pub mod crossfade;
+pub mod overlay;
+pub mod reverse;
+pub mod repeat;
+pub mod loudness;
 
 pub use trim::trim;
 pub use mix::mix;
@@ -25,3 +29,7 @@ pub use speed::change_speed;
 pub use silence::silence;
 pub use volume::{adjust_volume, with_volume};
 pub use crossfade::crossfade;
+pub use overlay::overlay_at_position;
+pub use reverse::reverse;
+pub use repeat::repeat;
+pub use loudness::{dbfs, rms, peak, peak_dbfs, adjust_volume_db, with_volume_db};

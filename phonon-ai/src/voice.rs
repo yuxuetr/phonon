@@ -13,6 +13,21 @@ pub struct VoiceConfig {
     /// The TTS model to use (e.g. "tts-1", "tts-1-hd").
     #[serde(default = "default_model")]
     pub model: String,
+
+    /// Emotion for the voice (e.g. "happy", "sad", "excited", "calm").
+    /// Provider-specific; ignored if the provider does not support it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emotion: Option<String>,
+
+    /// Speaking style (e.g. "conversational", "narration", "newscast").
+    /// Provider-specific; ignored if the provider does not support it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+
+    /// Language / locale (e.g. "en-US", "zh-CN", "ja-JP").
+    /// Provider-specific; used by multi-language providers like Edge TTS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 fn default_speed() -> f64 {
@@ -29,6 +44,9 @@ impl Default for VoiceConfig {
             voice_id: "alloy".to_string(),
             speed: default_speed(),
             model: default_model(),
+            emotion: None,
+            style: None,
+            language: None,
         }
     }
 }
@@ -51,6 +69,24 @@ impl VoiceConfig {
     /// Set the TTS model.
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = model.into();
+        self
+    }
+
+    /// Set the emotion.
+    pub fn with_emotion(mut self, emotion: impl Into<String>) -> Self {
+        self.emotion = Some(emotion.into());
+        self
+    }
+
+    /// Set the speaking style.
+    pub fn with_style(mut self, style: impl Into<String>) -> Self {
+        self.style = Some(style.into());
+        self
+    }
+
+    /// Set the language / locale.
+    pub fn with_language(mut self, language: impl Into<String>) -> Self {
+        self.language = Some(language.into());
         self
     }
 }

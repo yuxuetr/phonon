@@ -11,6 +11,10 @@ use symphonia::core::probe::Hint;
 use std::ffi::OsStr;
 use tracing::{info, instrument};
 
+pub mod mp3;
+
+pub use mp3::{Mp3Config, write_mp3};
+
 /// Reads an audio file and decodes it into an AudioBuffer.
 ///
 /// Supports all formats supported by Symphonia (MP3, WAV, FLAC, OGG, AAC, etc.).
@@ -123,8 +127,7 @@ pub fn read_audio<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
 ///
 /// The output format is determined by the file extension:
 /// - `.wav` — WAV format (16-bit PCM) via phonon-wav
-///
-/// Future versions will support MP3, FLAC, and other formats.
+/// - `.mp3` — MP3 format (192 kbps default) via LAME encoder
 #[instrument(skip(buffer, path), fields(path = %path.as_ref().display(), duration = buffer.duration_secs()))]
 pub fn write_audio<P: AsRef<Path>>(path: P, buffer: &AudioBuffer) -> Result<()> {
     let path = path.as_ref();
@@ -134,9 +137,12 @@ pub fn write_audio<P: AsRef<Path>>(path: P, buffer: &AudioBuffer) -> Result<()> 
         "wav" => {
             phonon_wav::write_wav(path, buffer)?;
         }
+        "mp3" => {
+            mp3::write_mp3(path, buffer, &Mp3Config::default())?;
+        }
         other => {
             return Err(PhononError::Wav(format!(
-                "Unsupported output format: .{}. Currently only WAV is supported.",
+                "Unsupported output format: .{}. Supported: wav, mp3.",
                 other
             )));
         }
@@ -144,4 +150,16 @@ pub fn write_audio<P: AsRef<Path>>(path: P, buffer: &AudioBuffer) -> Result<()> 
 
     info!("Audio written successfully");
     Ok(())
+}
+
+/// Writes an AudioBuffer to an MP3 file with custom configuration.
+///
+/// Use this when you need control over bitrate or other encoding options.
+#[instrument(skip(buffer, path, config), fields(path = %path.as_ref().display(), bitrate = config.bitrate_kbps))]
+pub fn write_mp3_with_config<P: AsRef<Path>>(
+    path: P,
+    buffer: &AudioBuffer,
+    config: &Mp3Config,
+) -> Result<()> {
+    mp3::write_mp3(path, buffer, config)
 }

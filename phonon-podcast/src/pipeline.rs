@@ -4,6 +4,8 @@ use crate::PodcastError;
 use phonon_ai::TtsProvider;
 use phonon_core::{self, AudioBuffer};
 use std::path::Path;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 use tracing::{info, instrument};
 
 /// The podcast generation pipeline.
@@ -38,25 +40,68 @@ impl<T: TtsProvider> PodcastPipeline<T> {
 
         info!("Starting podcast generation");
 
-        // Step 1: Synthesize all segments
-        let mut segment_buffers = Vec::with_capacity(script.segments.len());
-        for (i, segment) in script.segments.iter().enumerate() {
-            let voice = script
-                .speakers
-                .get(&segment.speaker)
-                .ok_or_else(|| {
-                    PodcastError::Script(format!("Unknown speaker: {}", segment.speaker))
-                })?;
+        // Step 1: Synthesize all segments concurrently
+        let concurrency = config.tts_concurrency.max(1);
 
-            info!(segment = i, speaker = %segment.speaker, "Synthesizing segment");
+        // Collect owned (index, text, voice) tuples up front so we can synthesize concurrently.
+        let synthesis_items: Vec<_> = script
+            .segments
+            .iter()
+            .enumerate()
+            .map(|(i, segment)| {
+                let voice = script
+                    .speakers
+                    .get(&segment.speaker)
+                    .ok_or_else(|| {
+                        PodcastError::Script(format!("Unknown speaker: {}", segment.speaker))
+                    })
+                    .cloned();
+                (i, segment.text.clone(), segment.speaker.clone(), voice)
+            })
+            .collect();
 
-            let buffer = self
-                .tts
-                .synthesize(&segment.text, voice)
-                .await
-                .map_err(|e| PodcastError::Tts(e.to_string()))?;
+        // Validate all speakers before starting any synthesis.
+        for (_, _, _, voice_result) in &synthesis_items {
+            if let Err(e) = voice_result {
+                return Err(PodcastError::Script(e.to_string()));
+            }
+        }
 
-            segment_buffers.push(buffer);
+        info!(segments = synthesis_items.len(), concurrency, "Starting concurrent TTS synthesis");
+
+        let semaphore = Arc::new(Semaphore::new(concurrency));
+        let tts = &self.tts;
+
+        let futures: Vec<_> = synthesis_items
+            .into_iter()
+            .map(|(i, text, speaker, voice_result)| {
+                let sem = semaphore.clone();
+                async move {
+                    // Safety: we validated all voices above, so this won't fail.
+                    let voice = voice_result
+                        .map_err(|e| PodcastError::Script(e.to_string()))?;
+
+                    let _permit = sem
+                        .acquire()
+                        .await
+                        .map_err(|e| PodcastError::Processing(format!("Semaphore error: {e}")))?;
+
+                    info!(segment = i, speaker = %speaker, "Synthesizing segment");
+
+                    let buffer = tts
+                        .synthesize(&text, &voice)
+                        .await
+                        .map_err(|e| PodcastError::Tts(e.to_string()))?;
+
+                    Ok::<AudioBuffer, PodcastError>(buffer)
+                }
+            })
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+        let mut segment_buffers = Vec::with_capacity(results.len());
+        for result in results {
+            segment_buffers.push(result?);
         }
 
         info!(count = segment_buffers.len(), "All segments synthesized");

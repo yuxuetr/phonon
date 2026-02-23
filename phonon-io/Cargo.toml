@@ -12,3 +12,4 @@ phonon-wav = { path = "../phonon-wav", version = "0.1.0" }
 thiserror = "1.0"
 tracing = "0.1"
 symphonia = { version = "0.5", features = ["all"] }
+mp3lame-encoder = "0.2"
