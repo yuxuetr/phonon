@@ -13,6 +13,8 @@ phonon-wav = { path = "../phonon-wav" }
 phonon-io = { path = "../phonon-io" }
 phonon-core = { path = "../phonon-core" }
 phonon-engine = { path = "../phonon-engine" }
+phonon-podcast = { path = "../phonon-podcast" }
+phonon-ai = { path = "../phonon-ai" }
 rfd = "0.15"
 tokio = { version = "1", features = ["rt"] }
 

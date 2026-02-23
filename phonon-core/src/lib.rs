@@ -17,6 +17,8 @@ pub use algorithms::overlay::overlay_at_position;
 pub use algorithms::reverse::reverse;
 pub use algorithms::repeat::repeat;
 pub use algorithms::loudness::{dbfs, rms, peak, peak_dbfs, adjust_volume_db, with_volume_db};
+pub use algorithms::compressor::{compress, with_compression, CompressorConfig};
+pub use algorithms::generators::{generate_signal, generate_tone, generate_beep, Waveform};
 
 use thiserror::Error;
 
@@ -33,6 +35,9 @@ pub enum PhononError {
 
     #[error("Channel count mismatch: expected {expected}, got {actual}")]
     ChannelMismatch { expected: u16, actual: u16 },
+
+    #[error("Invalid parameter: {0}")]
+    InvalidParam(String),
 }
 
 pub type Result<T> = std::result::Result<T, PhononError>;

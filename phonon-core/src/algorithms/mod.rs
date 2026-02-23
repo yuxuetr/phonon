@@ -15,6 +15,8 @@ pub mod overlay;
 pub mod reverse;
 pub mod repeat;
 pub mod loudness;
+pub mod compressor;
+pub mod generators;
 
 pub use trim::trim;
 pub use mix::mix;
@@ -33,3 +35,5 @@ pub use overlay::overlay_at_position;
 pub use reverse::reverse;
 pub use repeat::repeat;
 pub use loudness::{dbfs, rms, peak, peak_dbfs, adjust_volume_db, with_volume_db};
+pub use compressor::{compress, with_compression, CompressorConfig};
+pub use generators::{generate_signal, generate_tone, generate_beep, Waveform};

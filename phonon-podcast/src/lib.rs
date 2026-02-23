@@ -23,10 +23,12 @@
 pub mod config;
 pub mod pipeline;
 pub mod script;
+pub mod script_gen;
 
 pub use config::PipelineConfig;
 pub use pipeline::PodcastPipeline;
 pub use script::{PodcastScript, Segment};
+pub use script_gen::{ScriptGenerator, ScriptRequest, OpenAiScriptGenerator};
 
 use thiserror::Error;
 

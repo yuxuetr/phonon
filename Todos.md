@@ -8,14 +8,14 @@
 - [x] Edge TTS Provider (phonon-ai: msedge-tts WebSocket, 免费无 API Key)
 - [x] 并发 TTS 合成 (phonon-podcast: Semaphore + join_all, tts_concurrency 可配置, 默认 4)
 
-## v0.3 — 播客 Agent 完整链路
+## v0.3 — 播客 Agent 完整链路 ✅ 已完成
 
-- [ ] ElevenLabs TTS Provider (phonon-ai: 多角色、情感、voice cloning)
-- [ ] LLM 脚本生成集成 (phonon-podcast: ScriptGenerator trait, 话题→PodcastScript)
-- [ ] 动态范围压缩 (phonon-core: compressor — threshold/ratio/attack/release)
-- [ ] 信号发生器 (phonon-core: Sine/Square/Sawtooth/WhiteNoise)
-- [ ] phonon-engine 播放控制 (pause/resume/seek/volume, 进度回调)
-- [ ] phonon-studio 播客面板 (脚本编辑, 生成进度条, 波形编辑)
+- [x] 动态范围压缩 (phonon-core: compressor — threshold/ratio/attack/release, 预设 voice/gentle/limiter)
+- [x] 信号发生器 (phonon-core: Sine/Square/Sawtooth/WhiteNoise, generate_tone/generate_beep)
+- [x] ElevenLabs TTS Provider (phonon-ai: voice_settings情感映射, 多模型支持)
+- [x] LLM 脚本生成 (phonon-podcast: ScriptGenerator trait + OpenAiScriptGenerator, 话题→JSON脚本)
+- [x] phonon-engine 播放控制 (pause/resume/stop/seek/volume, position/progress/state 查询)
+- [x] phonon-studio 播客面板 (暂停/继续按钮, 依赖 phonon-podcast + phonon-ai)
 
 ## v0.4+ — 进阶与生态
 

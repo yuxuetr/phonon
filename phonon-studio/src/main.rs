@@ -240,6 +240,13 @@ fn App() -> Element {
                             let player_reader = player_state.read();
                             let Some(ref player) = *player_reader else { return };
 
+                            // If paused, just resume
+                            if player.playback_state() == phonon_engine::PlaybackState::Paused {
+                                player.resume();
+                                status_msg.set("Resumed".to_string());
+                                return;
+                            }
+
                             // Clone via Arc (cheap ref-count bump) then build a mutable buffer for resampling
                             let mut buffer = AudioBuffer {
                                 samples: buf_arc.samples.clone(),
@@ -269,11 +276,22 @@ fn App() -> Element {
                         "▶"
                     }
                     button {
+                        class: "px-3 py-2 rounded-sm shadow-sm transition hover:opacity-90 bg-yellow-600 text-white text-xl",
+                        title: "Pause",
+                        onclick: move |_| {
+                            if let Some(player) = player_state.read().as_ref() {
+                                player.pause();
+                                status_msg.set("Paused".to_string());
+                            }
+                        },
+                        "⏸"
+                    }
+                    button {
                         class: "px-3 py-2 rounded-sm shadow-sm transition hover:opacity-90 bg-red-600 text-white text-xl",
                         title: "Stop",
                         onclick: move |_| {
                             if let Some(player) = player_state.read().as_ref() {
-                                player.clear();
+                                player.stop();
                                 status_msg.set("Stopped".to_string());
                             }
                         },

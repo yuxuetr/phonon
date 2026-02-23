@@ -25,11 +25,13 @@
 
 pub mod client;
 pub mod edge_tts;
+pub mod elevenlabs;
 pub mod tts;
 pub mod voice;
 
 pub use client::HttpClient;
 pub use edge_tts::EdgeTts;
+pub use elevenlabs::ElevenLabsTts;
 pub use tts::{OpenAiTts, TtsProvider};
 pub use voice::VoiceConfig;
 

@@ -925,15 +925,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crossbeam-queue"
-version = "0.3.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f58bbc28f91df819d0aa2a2c00cd19754769c2fad90579b3592b1c9ba7a3115"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
 name = "crossbeam-utils"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3812,8 +3803,6 @@ name = "phonon-engine"
 version = "0.1.0"
 dependencies = [
  "cpal",
- "crossbeam-queue",
- "log",
  "phonon-core",
  "thiserror 1.0.69",
  "tracing",
@@ -3853,9 +3842,11 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "dioxus-logger",
+ "phonon-ai",
  "phonon-core",
  "phonon-engine",
  "phonon-io",
+ "phonon-podcast",
  "phonon-wav",
  "rfd 0.15.4",
  "tokio",
