@@ -15,3 +15,4 @@ symphonia.workspace = true
 mp3lame-encoder.workspace = true
 flacenc.workspace = true
 vorbis_rs.workspace = true
+fdk-aac.workspace = true

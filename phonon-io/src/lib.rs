@@ -11,10 +11,12 @@ use symphonia::core::probe::Hint;
 use std::ffi::OsStr;
 use tracing::{info, instrument};
 
+pub mod aac;
 pub mod flac;
 pub mod mp3;
 pub mod ogg;
 
+pub use aac::{AacConfig, write_aac};
 pub use flac::{FlacConfig, write_flac};
 pub use mp3::{Mp3Config, write_mp3};
 pub use ogg::{OggConfig, write_ogg};
@@ -141,6 +143,7 @@ pub fn read_audio<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
 /// - `.mp3` — MP3 format (192 kbps default) via LAME encoder
 /// - `.flac` — FLAC format (16-bit lossless) via flacenc
 /// - `.ogg` — OGG Vorbis format (quality 0.5 VBR) via vorbis_rs
+/// - `.aac` — AAC format (128 kbps ADTS) via fdk-aac
 ///
 /// # Example
 ///
@@ -152,6 +155,7 @@ pub fn read_audio<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
 /// phonon_io::write_audio("output.mp3", &buffer).unwrap();
 /// phonon_io::write_audio("output.flac", &buffer).unwrap();
 /// phonon_io::write_audio("output.ogg", &buffer).unwrap();
+/// phonon_io::write_audio("output.aac", &buffer).unwrap();
 /// ```
 #[instrument(skip(buffer, path), fields(path = %path.as_ref().display(), duration = buffer.duration_secs()))]
 pub fn write_audio<P: AsRef<Path>>(path: P, buffer: &AudioBuffer) -> Result<()> {
@@ -171,9 +175,12 @@ pub fn write_audio<P: AsRef<Path>>(path: P, buffer: &AudioBuffer) -> Result<()> 
         "ogg" | "oga" => {
             ogg::write_ogg(path, buffer, &OggConfig::default())?;
         }
+        "aac" => {
+            aac::write_aac(path, buffer, &AacConfig::default())?;
+        }
         other => {
             return Err(PhononError::Wav(format!(
-                "Unsupported output format: .{}. Supported: wav, mp3, flac, ogg.",
+                "Unsupported output format: .{}. Supported: wav, mp3, flac, ogg, aac.",
                 other
             )));
         }
