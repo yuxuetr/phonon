@@ -5,6 +5,9 @@ use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use tracing::{info, error, instrument};
 
+pub mod effects;
+pub use effects::*;
+
 #[derive(Error, Debug)]
 pub enum EngineError {
     #[error("Audio device error: {0}")]
@@ -44,12 +47,18 @@ struct SharedState {
     volume_bits: AtomicU32,
     /// When true, do not auto-stop when reaching the end (more samples may arrive).
     streaming: AtomicBool,
+    /// Real-time effect chain applied during playback.
+    effect_chain: Mutex<EffectChain>,
+    /// Sample rate for effect processing.
+    sample_rate: u32,
+    /// Channel count for effect processing.
+    channels: u16,
 }
 
 use std::sync::atomic::AtomicU32;
 
 impl SharedState {
-    fn new() -> Self {
+    fn new(sample_rate: u32, channels: u16) -> Self {
         Self {
             samples: Mutex::new(Vec::new()),
             position: AtomicUsize::new(0),
@@ -58,6 +67,9 @@ impl SharedState {
             active: AtomicBool::new(false),
             volume_bits: AtomicU32::new(f32::to_bits(1.0)),
             streaming: AtomicBool::new(false),
+            effect_chain: Mutex::new(EffectChain::new()),
+            sample_rate,
+            channels,
         }
     }
 
@@ -98,7 +110,7 @@ impl AudioPlayer {
         let channels = config.channels();
         info!(sample_rate, channels, "Initialized audio device");
 
-        let state = Arc::new(SharedState::new());
+        let state = Arc::new(SharedState::new(sample_rate, channels));
         let state_clone = state.clone();
 
         let err_fn = |err| error!("an error occurred on stream: {}", err);
@@ -310,6 +322,29 @@ impl AudioPlayer {
         self.state.total_samples.store(0, Ordering::SeqCst);
     }
 
+    /// Adds a real-time audio effect to the playback chain.
+    pub fn add_effect(&self, effect: Box<dyn AudioEffect>) {
+        if let Ok(mut chain) = self.state.effect_chain.lock() {
+            chain.push(effect);
+        }
+    }
+
+    /// Removes all effects from the playback chain.
+    pub fn clear_effects(&self) {
+        if let Ok(mut chain) = self.state.effect_chain.lock() {
+            chain.clear();
+        }
+    }
+
+    /// Returns the number of active effects.
+    pub fn effect_count(&self) -> usize {
+        self.state
+            .effect_chain
+            .lock()
+            .map(|c| c.len())
+            .unwrap_or(0)
+    }
+
     pub fn device_sample_rate(&self) -> u32 {
         self.device_sample_rate
     }
@@ -354,6 +389,13 @@ fn write_data(output: &mut [f32], state: &SharedState) {
     }
 
     state.position.store(pos, Ordering::Relaxed);
+
+    // Apply real-time effects
+    if let Ok(mut chain) = state.effect_chain.lock() {
+        if !chain.is_empty() {
+            chain.process(output, state.sample_rate, state.channels);
+        }
+    }
 
     // Auto-stop when finished (unless streaming — more data may arrive)
     if pos >= total && !state.streaming.load(Ordering::Relaxed) {
