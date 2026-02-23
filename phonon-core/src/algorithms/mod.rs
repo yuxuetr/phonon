@@ -23,7 +23,7 @@ pub use mix::mix;
 pub use normalize::normalize;
 pub use fade::{fade_in, fade_out};
 pub use merge::merge;
-pub use resample::resample;
+pub use resample::{resample, resample_sinc, resample_linear};
 pub use channels::ensure_channels;
 pub use filters::{filter, FilterType};
 pub use spectrum::compute_spectrum;

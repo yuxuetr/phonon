@@ -1,6 +1,10 @@
 use crate::{AudioBuffer, PhononError, Result};
 
-/// Resamples the audio buffer to a new sample rate using linear interpolation.
+/// Resamples the audio buffer to a new sample rate using windowed sinc interpolation.
+///
+/// Uses a Lanczos-windowed sinc filter for high-quality resampling with minimal
+/// aliasing artifacts. The `quality` parameter controls the filter half-width
+/// (higher = better quality but slower).
 ///
 /// # Arguments
 ///
@@ -10,13 +14,84 @@ use crate::{AudioBuffer, PhononError, Result};
 /// # Returns
 ///
 /// A new `AudioBuffer` with the target sample rate.
-///
-/// # Note
-///
-/// This implementation uses simple linear interpolation, which is fast but may introduce
-/// aliasing artifacts for high-frequency content or significant downsampling.
-/// For professional quality, a windowed sinc filter (Polyphase) should be used in future versions.
 pub fn resample(buffer: &AudioBuffer, target_sample_rate: u32) -> Result<AudioBuffer> {
+    resample_sinc(buffer, target_sample_rate, 16)
+}
+
+/// Resamples using windowed sinc (Lanczos) interpolation with configurable quality.
+///
+/// * `quality` — sinc filter half-width in samples (typical range 4–64, default 16).
+///   Higher values produce better results but are slower.
+pub fn resample_sinc(
+    buffer: &AudioBuffer,
+    target_sample_rate: u32,
+    quality: usize,
+) -> Result<AudioBuffer> {
+    if target_sample_rate == 0 {
+        return Err(PhononError::InvalidSampleRate(0));
+    }
+    if buffer.sample_rate == target_sample_rate {
+        return Ok(buffer.clone());
+    }
+    if buffer.samples.is_empty() {
+        return Ok(AudioBuffer::new(target_sample_rate, buffer.channels, 0));
+    }
+
+    let ch = buffer.channels as usize;
+    let ratio = buffer.sample_rate as f64 / target_sample_rate as f64;
+    let old_frames = buffer.samples.len() / ch;
+    let new_frames = (old_frames as f64 / ratio).ceil() as usize;
+    let a = quality.max(1);
+
+    // When downsampling, we need to scale the sinc filter to avoid aliasing
+    let filter_scale = if ratio > 1.0 { 1.0 / ratio } else { 1.0 };
+
+    let mut new_samples = Vec::with_capacity(new_frames * ch);
+
+    for i in 0..new_frames {
+        let src_pos = i as f64 * ratio;
+        let src_floor = src_pos.floor() as i64;
+
+        for c in 0..ch {
+            let mut sum = 0.0f64;
+            let mut weight_sum = 0.0f64;
+
+            let j_start = src_floor - a as i64 + 1;
+            let j_end = src_floor + a as i64;
+
+            for j in j_start..=j_end {
+                if j < 0 || j >= old_frames as i64 {
+                    continue;
+                }
+                let x = (src_pos - j as f64) * filter_scale;
+                let w = lanczos_kernel(x, a);
+                sum += buffer.samples[j as usize * ch + c] as f64 * w;
+                weight_sum += w;
+            }
+
+            let sample = if weight_sum.abs() > 1e-12 {
+                (sum / weight_sum) as f32
+            } else {
+                0.0
+            };
+            new_samples.push(sample.clamp(-1.0, 1.0));
+        }
+    }
+
+    Ok(AudioBuffer {
+        samples: new_samples,
+        sample_rate: target_sample_rate,
+        channels: buffer.channels,
+    })
+}
+
+/// Resamples using simple linear interpolation (fast, lower quality).
+///
+/// Kept for backward compatibility and for cases where speed matters more than quality.
+pub fn resample_linear(
+    buffer: &AudioBuffer,
+    target_sample_rate: u32,
+) -> Result<AudioBuffer> {
     if target_sample_rate == 0 {
         return Err(PhononError::InvalidSampleRate(0));
     }
@@ -30,7 +105,7 @@ pub fn resample(buffer: &AudioBuffer, target_sample_rate: u32) -> Result<AudioBu
     let ratio = buffer.sample_rate as f64 / target_sample_rate as f64;
     let old_len = buffer.samples.len() / buffer.channels as usize;
     let new_len = (old_len as f64 / ratio).ceil() as usize;
-    
+
     let mut new_samples = Vec::with_capacity(new_len * buffer.channels as usize);
 
     for i in 0..new_len {
@@ -42,8 +117,6 @@ pub fn resample(buffer: &AudioBuffer, target_sample_rate: u32) -> Result<AudioBu
         for ch in 0..buffer.channels as usize {
             let s1 = buffer.samples[old_idx_floor * buffer.channels as usize + ch];
             let s2 = buffer.samples[old_idx_ceil * buffer.channels as usize + ch];
-            
-            // Linear interpolation: y = y1 + (y2 - y1) * t
             let sample = s1 + (s2 - s1) * t;
             new_samples.push(sample);
         }
@@ -54,6 +127,26 @@ pub fn resample(buffer: &AudioBuffer, target_sample_rate: u32) -> Result<AudioBu
         sample_rate: target_sample_rate,
         channels: buffer.channels,
     })
+}
+
+/// Normalized sinc function: sinc(x) = sin(πx) / (πx), sinc(0) = 1.
+fn sinc(x: f64) -> f64 {
+    if x.abs() < 1e-12 {
+        1.0
+    } else {
+        let px = std::f64::consts::PI * x;
+        px.sin() / px
+    }
+}
+
+/// Lanczos window kernel: L(x, a) = sinc(x) * sinc(x/a) for |x| < a, else 0.
+fn lanczos_kernel(x: f64, a: usize) -> f64 {
+    let a_f = a as f64;
+    if x.abs() < a_f {
+        sinc(x) * sinc(x / a_f)
+    } else {
+        0.0
+    }
 }
 
 #[cfg(test)]
@@ -73,45 +166,106 @@ mod tests {
 
     #[test]
     fn test_resample_upsample() {
-        // Double the sample rate: 100Hz -> 200Hz
-        // Input: 0.0, 1.0 (2 samples)
-        // Output should have approx 4 samples: 0.0, 0.5, 1.0, 1.0(clamped)
+        // Double the sample rate: 100Hz -> 200Hz with linear (predictable)
         let buffer = AudioBuffer {
             samples: vec![0.0, 1.0],
             sample_rate: 100,
             channels: 1,
         };
-        let resampled = resample(&buffer, 200).unwrap();
-        
+        let resampled = resample_linear(&buffer, 200).unwrap();
+
         assert_eq!(resampled.sample_rate, 200);
         assert_eq!(resampled.samples.len(), 4);
-        
-        assert!((resampled.samples[0] - 0.0).abs() < 1e-6); // idx 0.0 -> 0.0
-        assert!((resampled.samples[1] - 0.5).abs() < 1e-6); // idx 0.5 -> 0.5
-        assert!((resampled.samples[2] - 1.0).abs() < 1e-6); // idx 1.0 -> 1.0
-        assert!((resampled.samples[3] - 1.0).abs() < 1e-6); // idx 1.5 -> 1.0 (clamped to end)
+
+        assert!((resampled.samples[0] - 0.0).abs() < 1e-6);
+        assert!((resampled.samples[1] - 0.5).abs() < 1e-6);
+        assert!((resampled.samples[2] - 1.0).abs() < 1e-6);
+        assert!((resampled.samples[3] - 1.0).abs() < 1e-6);
     }
 
     #[test]
     fn test_resample_stereo() {
-        // 1 frame of stereo: L=0.0, R=1.0
-        // Upsample 2x
         let buffer = AudioBuffer {
-            samples: vec![0.0, 1.0], 
+            samples: vec![0.0, 1.0],
             sample_rate: 100,
             channels: 2,
         };
-        let resampled = resample(&buffer, 200).unwrap();
-        
-        // Should have 2 frames (4 samples)
-        // Frame 0: L=0.0, R=1.0
-        // Frame 1: L=0.0, R=1.0 (interpolated between frame 0 and frame 0-end)
-        
+        let resampled = resample_linear(&buffer, 200).unwrap();
+
         assert_eq!(resampled.samples.len(), 4);
-        assert!((resampled.samples[0] - 0.0).abs() < 1e-6); // L0
-        assert!((resampled.samples[1] - 1.0).abs() < 1e-6); // R0
-        assert!((resampled.samples[2] - 0.0).abs() < 1e-6); // L1 (interp)
-        assert!((resampled.samples[3] - 1.0).abs() < 1e-6); // R1 (interp)
+        assert!((resampled.samples[0] - 0.0).abs() < 1e-6);
+        assert!((resampled.samples[1] - 1.0).abs() < 1e-6);
+        assert!((resampled.samples[2] - 0.0).abs() < 1e-6);
+        assert!((resampled.samples[3] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_sinc_preserves_frequency() {
+        // Generate a 440Hz sine wave at 44100Hz, resample to 48000Hz,
+        // then resample back. The result should closely match the original.
+        let sr = 44100_u32;
+        let n = 4410; // 0.1 seconds
+        let mut samples = Vec::with_capacity(n);
+        for i in 0..n {
+            let t = i as f64 / sr as f64;
+            samples.push((t * 440.0 * 2.0 * std::f64::consts::PI).sin() as f32);
+        }
+
+        let original = AudioBuffer { samples: samples.clone(), sample_rate: sr, channels: 1 };
+        let up = resample_sinc(&original, 48000, 16).unwrap();
+        let back = resample_sinc(&up, sr, 16).unwrap();
+
+        // Compare mid-section to avoid edge effects
+        let start = 500;
+        let end = n.min(back.samples.len()) - 500;
+        let mut max_err: f32 = 0.0;
+        for i in start..end {
+            let err = (back.samples[i] - samples[i]).abs();
+            if err > max_err {
+                max_err = err;
+            }
+        }
+        assert!(max_err < 0.02, "Sinc roundtrip max error too high: {max_err}");
+    }
+
+    #[test]
+    fn test_sinc_vs_linear_quality() {
+        // Sinc should have lower error than linear for a pure tone roundtrip
+        let sr = 44100_u32;
+        let n = 4410;
+        let mut samples = Vec::with_capacity(n);
+        for i in 0..n {
+            let t = i as f64 / sr as f64;
+            samples.push((t * 1000.0 * 2.0 * std::f64::consts::PI).sin() as f32);
+        }
+        let original = AudioBuffer { samples: samples.clone(), sample_rate: sr, channels: 1 };
+
+        let sinc_up = resample_sinc(&original, 48000, 16).unwrap();
+        let sinc_back = resample_sinc(&sinc_up, sr, 16).unwrap();
+
+        let lin_up = resample_linear(&original, 48000).unwrap();
+        let lin_back = resample_linear(&lin_up, sr).unwrap();
+
+        let calc_rms_err = |resampled: &[f32]| -> f64 {
+            let start = 500;
+            let end = n.min(resampled.len()) - 500;
+            let mut sum = 0.0f64;
+            let mut count = 0;
+            for i in start..end {
+                let err = (resampled[i] - samples[i]) as f64;
+                sum += err * err;
+                count += 1;
+            }
+            (sum / count as f64).sqrt()
+        };
+
+        let sinc_err = calc_rms_err(&sinc_back.samples);
+        let lin_err = calc_rms_err(&lin_back.samples);
+
+        assert!(
+            sinc_err < lin_err,
+            "Sinc RMS error ({sinc_err:.6}) should be lower than linear ({lin_err:.6})"
+        );
     }
 
     #[test]
