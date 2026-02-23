@@ -8,6 +8,9 @@ pub mod channels;
 pub mod filters;
 pub mod spectrum;
 pub mod speed;
+pub mod silence;
+pub mod volume;
+pub mod crossfade;
 
 pub use trim::trim;
 pub use mix::mix;
@@ -19,3 +22,6 @@ pub use channels::ensure_channels;
 pub use filters::{filter, FilterType};
 pub use spectrum::compute_spectrum;
 pub use speed::change_speed;
+pub use silence::silence;
+pub use volume::{adjust_volume, with_volume};
+pub use crossfade::crossfade;

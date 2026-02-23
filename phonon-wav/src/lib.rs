@@ -70,7 +70,7 @@ pub fn write_wav<P: AsRef<Path>>(path: P, buffer: &AudioBuffer) -> Result<()> {
 
     for &sample in &buffer.samples {
         // Clamp to avoid integer overflow/wrapping which sounds terrible
-        let clamped = sample.max(-1.0).min(1.0);
+        let clamped = sample.clamp(-1.0, 1.0);
         let scaled = (clamped * 32767.0) as i16;
         writer
             .write_sample(scaled)

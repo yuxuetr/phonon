@@ -98,4 +98,47 @@ mod tests {
         assert_eq!(converted.samples.len(), 2);
         assert_eq!(converted.samples, vec![0.5, 0.5]);
     }
+
+    #[test]
+    fn test_ensure_channels_identity() {
+        let buffer = AudioBuffer {
+            samples: vec![0.5, 0.3],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        let converted = ensure_channels(&buffer, 1).unwrap();
+        assert_eq!(converted.samples, vec![0.5, 0.3]);
+    }
+
+    #[test]
+    fn test_ensure_channels_zero_target() {
+        let buffer = AudioBuffer {
+            samples: vec![0.5],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        assert!(ensure_channels(&buffer, 0).is_err());
+    }
+
+    #[test]
+    fn test_ensure_channels_zero_source() {
+        let buffer = AudioBuffer {
+            samples: vec![],
+            sample_rate: 44100,
+            channels: 0,
+        };
+        assert!(ensure_channels(&buffer, 2).is_err());
+    }
+
+    #[test]
+    fn test_ensure_channels_empty_buffer() {
+        let buffer = AudioBuffer {
+            samples: vec![],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        let converted = ensure_channels(&buffer, 2).unwrap();
+        assert!(converted.samples.is_empty());
+        assert_eq!(converted.channels, 2);
+    }
 }

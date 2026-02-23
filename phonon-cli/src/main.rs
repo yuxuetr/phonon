@@ -1,5 +1,7 @@
 use phonon_core::{algorithms, AudioBuffer, FilterType};
 use phonon_engine::AudioPlayer;
+use phonon_ai::{OpenAiTts, TtsProvider, VoiceConfig};
+use phonon_podcast::{PodcastPipeline, PodcastScript};
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
@@ -111,10 +113,56 @@ enum Commands {
         output: PathBuf,
         #[arg(short, long)]
         factor: f64,
-    }
+    },
+    /// Text-to-Speech: synthesize text to audio file
+    Tts {
+        /// Text to synthesize
+        #[arg(short, long)]
+        text: String,
+        /// Voice ID (e.g. alloy, echo, nova, shimmer, fable, onyx)
+        #[arg(short, long, default_value = "alloy")]
+        voice: String,
+        /// TTS model (tts-1 or tts-1-hd)
+        #[arg(short, long, default_value = "tts-1")]
+        model: String,
+        /// Output file path
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Podcast generation from a JSON script
+    Podcast {
+        #[command(subcommand)]
+        action: PodcastAction,
+    },
 }
 
-fn main() -> anyhow::Result<()> {
+#[derive(Subcommand)]
+enum PodcastAction {
+    /// Generate a complete podcast from a script file
+    Generate {
+        /// Path to the podcast script JSON file
+        #[arg(short, long)]
+        script: PathBuf,
+        /// Output audio file path
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Preview a single segment from a script
+    Preview {
+        /// Path to the podcast script JSON file
+        #[arg(short, long)]
+        script: PathBuf,
+        /// Segment index to preview (0-based)
+        #[arg(long)]
+        segment: usize,
+        /// Output audio file path
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     // Initialize logging
     tracing_subscriber::fmt::init();
     
@@ -212,6 +260,44 @@ fn main() -> anyhow::Result<()> {
             let new_buffer = algorithms::change_speed(&buffer, *factor)?;
             phonon_wav::write_wav(output, &new_buffer)?;
             println!("Changed speed by factor {} to {:?}", factor, output);
+        }
+        Commands::Tts { text, voice, model, output } => {
+            println!("Synthesizing with voice '{}' (model: {})...", voice, model);
+            let tts = OpenAiTts::new()?;
+            let voice_config = VoiceConfig::new(voice.clone()).with_model(model.clone());
+            let buffer = tts.synthesize(text, &voice_config).await?;
+            phonon_wav::write_wav(output, &buffer)?;
+            println!("Saved {:.2}s of audio to {:?}", buffer.duration_secs(), output);
+        }
+        Commands::Podcast { action } => {
+            match action {
+                PodcastAction::Generate { script, output } => {
+                    println!("Loading script from {:?}...", script);
+                    let podcast_script = PodcastScript::from_file(script)?;
+                    println!("Script '{}': {} segments, {} speakers",
+                        podcast_script.title,
+                        podcast_script.segment_count(),
+                        podcast_script.speaker_names().len()
+                    );
+
+                    let tts = OpenAiTts::new()?;
+                    let pipeline = PodcastPipeline::new(tts);
+
+                    println!("Generating podcast...");
+                    pipeline.generate_to_file(&podcast_script, output).await?;
+                    println!("Podcast saved to {:?}", output);
+                }
+                PodcastAction::Preview { script, segment, output } => {
+                    let podcast_script = PodcastScript::from_file(script)?;
+                    let tts = OpenAiTts::new()?;
+                    let pipeline = PodcastPipeline::new(tts);
+
+                    println!("Previewing segment {}...", segment);
+                    let buffer = pipeline.preview_segment(&podcast_script, *segment).await?;
+                    phonon_wav::write_wav(output, &buffer)?;
+                    println!("Preview saved to {:?} ({:.2}s)", output, buffer.duration_secs());
+                }
+            }
         }
     }
 

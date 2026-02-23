@@ -94,4 +94,37 @@ mod tests {
         };
         assert!(merge(&[b1, b2]).is_err());
     }
+
+    #[test]
+    fn test_merge_empty_list() {
+        let merged = merge(&[]).unwrap();
+        assert!(merged.samples.is_empty());
+        assert_eq!(merged.sample_rate, 0);
+    }
+
+    #[test]
+    fn test_merge_single_buffer() {
+        let b1 = AudioBuffer {
+            samples: vec![0.5, 0.3],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        let merged = merge(&[b1]).unwrap();
+        assert_eq!(merged.samples, vec![0.5, 0.3]);
+    }
+
+    #[test]
+    fn test_merge_channel_mismatch() {
+        let b1 = AudioBuffer {
+            samples: vec![0.5],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        let b2 = AudioBuffer {
+            samples: vec![0.5, 0.5],
+            sample_rate: 44100,
+            channels: 2,
+        };
+        assert!(merge(&[b1, b2]).is_err());
+    }
 }

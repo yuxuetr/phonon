@@ -113,4 +113,26 @@ mod tests {
         assert!((resampled.samples[2] - 0.0).abs() < 1e-6); // L1 (interp)
         assert!((resampled.samples[3] - 1.0).abs() < 1e-6); // R1 (interp)
     }
+
+    #[test]
+    fn test_resample_empty_buffer() {
+        let buffer = AudioBuffer {
+            samples: vec![],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        let resampled = resample(&buffer, 48000).unwrap();
+        assert!(resampled.samples.is_empty());
+        assert_eq!(resampled.sample_rate, 48000);
+    }
+
+    #[test]
+    fn test_resample_zero_target() {
+        let buffer = AudioBuffer {
+            samples: vec![1.0],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        assert!(resample(&buffer, 0).is_err());
+    }
 }

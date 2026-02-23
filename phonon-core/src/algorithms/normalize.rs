@@ -48,4 +48,63 @@ mod tests {
         assert!((buffer.samples[1] - (-0.4)).abs() < 1e-6);
         assert!((buffer.samples[2] - 0.2).abs() < 1e-6);
     }
+
+    #[test]
+    fn test_normalize_empty_buffer() {
+        let mut buffer = AudioBuffer {
+            samples: vec![],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        normalize(&mut buffer, 1.0);
+        assert!(buffer.samples.is_empty());
+    }
+
+    #[test]
+    fn test_normalize_silent_buffer() {
+        let mut buffer = AudioBuffer {
+            samples: vec![0.0, 0.0, 0.0],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        normalize(&mut buffer, 1.0);
+        // All zeros, peak is 0.0, no change
+        assert!(buffer.samples.iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn test_normalize_already_at_target() {
+        let mut buffer = AudioBuffer {
+            samples: vec![1.0, -0.5],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        normalize(&mut buffer, 1.0);
+        assert!((buffer.samples[0] - 1.0).abs() < 1e-6);
+        assert!((buffer.samples[1] - (-0.5)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_normalize_zero_target() {
+        let mut buffer = AudioBuffer {
+            samples: vec![0.5, -0.5],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        normalize(&mut buffer, 0.0);
+        // No-op for invalid target
+        assert!((buffer.samples[0] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_normalize_negative_target() {
+        let mut buffer = AudioBuffer {
+            samples: vec![0.5, -0.5],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        normalize(&mut buffer, -1.0);
+        // No-op for invalid target
+        assert!((buffer.samples[0] - 0.5).abs() < 1e-6);
+    }
 }

@@ -40,7 +40,7 @@ pub fn mix(buffer1: &AudioBuffer, buffer2: &AudioBuffer) -> Result<AudioBuffer> 
         
         // Simple additive mixing with hard clipping (clamp)
         // In future phases, we might want soft clipping or compressor
-        let mixed = (s1 + s2).max(-1.0).min(1.0);
+        let mixed = (s1 + s2).clamp(-1.0, 1.0);
         mixed_samples.push(mixed);
     }
 
@@ -75,5 +75,68 @@ mod tests {
         assert!((mixed.samples[1] - 1.0).abs() < 1e-6); // 0.5 + 0.6 = 1.1 -> clamped to 1.0
         assert!((mixed.samples[2] - 0.5).abs() < 1e-6); // 0.5 + 0.0
         assert!((mixed.samples[3] - 0.2).abs() < 1e-6); // 0.0 + 0.2 (b1 ended)
+    }
+
+    #[test]
+    fn test_mix_empty_buffers() {
+        let b1 = AudioBuffer {
+            samples: vec![],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        let b2 = AudioBuffer {
+            samples: vec![],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        let mixed = mix(&b1, &b2).unwrap();
+        assert!(mixed.samples.is_empty());
+    }
+
+    #[test]
+    fn test_mix_one_empty() {
+        let b1 = AudioBuffer {
+            samples: vec![0.5, 0.3],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        let b2 = AudioBuffer {
+            samples: vec![],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        let mixed = mix(&b1, &b2).unwrap();
+        assert_eq!(mixed.samples.len(), 2);
+        assert!((mixed.samples[0] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_mix_sample_rate_mismatch() {
+        let b1 = AudioBuffer {
+            samples: vec![0.5],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        let b2 = AudioBuffer {
+            samples: vec![0.5],
+            sample_rate: 48000,
+            channels: 1,
+        };
+        assert!(mix(&b1, &b2).is_err());
+    }
+
+    #[test]
+    fn test_mix_channel_mismatch() {
+        let b1 = AudioBuffer {
+            samples: vec![0.5],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        let b2 = AudioBuffer {
+            samples: vec![0.5, 0.5],
+            sample_rate: 44100,
+            channels: 2,
+        };
+        assert!(mix(&b1, &b2).is_err());
     }
 }

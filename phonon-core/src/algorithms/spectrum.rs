@@ -56,11 +56,11 @@ pub fn compute_spectrum(buffer: &AudioBuffer) -> Result<Vec<Vec<f32>>> {
         let output_len = fft_len / 2 + 1;
         let mut magnitudes = Vec::with_capacity(output_len);
 
-        for i in 0..output_len {
+        for item in input.iter().take(output_len) {
             // Norm: Divide by N to get true amplitude? 
             // Standard definition usually doesn't, but for "magnitude", we normally take abs / N.
             // Let's return raw magnitude (norm) for now.
-            let mag = input[i].norm() / fft_len as f32; 
+            let mag = item.norm() / fft_len as f32; 
             magnitudes.push(mag);
         }
 

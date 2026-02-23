@@ -10,6 +10,9 @@ pub use algorithms::channels::ensure_channels;
 pub use algorithms::filters::{filter, FilterType};
 pub use algorithms::spectrum::compute_spectrum;
 pub use algorithms::speed::change_speed;
+pub use algorithms::silence::silence;
+pub use algorithms::volume::{adjust_volume, with_volume};
+pub use algorithms::crossfade::crossfade;
 
 use thiserror::Error;
 

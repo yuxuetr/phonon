@@ -84,4 +84,35 @@ mod tests {
         assert_eq!(slowed.sample_rate, 100);
         assert!(slowed.samples.len() >= 4);
     }
+
+    #[test]
+    fn test_speed_identity() {
+        let buffer = AudioBuffer {
+            samples: vec![0.5, 0.3, 0.1],
+            sample_rate: 100,
+            channels: 1,
+        };
+        let result = change_speed(&buffer, 1.0).unwrap();
+        assert_eq!(result.samples, buffer.samples);
+    }
+
+    #[test]
+    fn test_speed_zero() {
+        let buffer = AudioBuffer {
+            samples: vec![0.5],
+            sample_rate: 100,
+            channels: 1,
+        };
+        assert!(change_speed(&buffer, 0.0).is_err());
+    }
+
+    #[test]
+    fn test_speed_negative() {
+        let buffer = AudioBuffer {
+            samples: vec![0.5],
+            sample_rate: 100,
+            channels: 1,
+        };
+        assert!(change_speed(&buffer, -1.0).is_err());
+    }
 }

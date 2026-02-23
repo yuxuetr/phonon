@@ -1,6 +1,8 @@
 [workspace]
 members = ["phonon-cli","phonon-core", "phonon-engine",
     "phonon-wav", "phonon-studio", "phonon-io",
+    "phonon-ai",
+    "phonon-podcast",
 ]
 resolver = "2"
 

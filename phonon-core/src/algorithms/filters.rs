@@ -105,12 +105,12 @@ fn calculate_coefficients(
     // Convert gain from dB to linear
     let a = 10.0_f64.powf(gain_db / 40.0); // For shelf/peaking. Audio EQ Cookbook uses A = 10^(dB/40)
 
-    let mut b0;
-    let mut b1;
-    let mut b2;
-    let mut a0;
-    let mut a1;
-    let mut a2;
+    let b0;
+    let b1;
+    let b2;
+    let a0;
+    let a1;
+    let a2;
 
     match filter_type {
         FilterType::LowPass => {

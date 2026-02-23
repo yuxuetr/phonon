@@ -80,4 +80,59 @@ mod tests {
         assert_eq!(trimmed.samples[0], 0.5);
         assert_eq!(trimmed.samples[1], -0.5);
     }
+
+    #[test]
+    fn test_trim_empty_buffer() {
+        let buffer = AudioBuffer {
+            samples: vec![],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        let trimmed = trim(&buffer, 0.0, 1.0).unwrap();
+        assert!(trimmed.samples.is_empty());
+    }
+
+    #[test]
+    fn test_trim_start_beyond_end() {
+        let buffer = AudioBuffer {
+            samples: vec![1.0; 100],
+            sample_rate: 100,
+            channels: 1,
+        };
+        let trimmed = trim(&buffer, 2.0, 3.0).unwrap();
+        assert!(trimmed.samples.is_empty());
+    }
+
+    #[test]
+    fn test_trim_start_equals_end() {
+        let buffer = AudioBuffer {
+            samples: vec![1.0; 100],
+            sample_rate: 100,
+            channels: 1,
+        };
+        let trimmed = trim(&buffer, 0.5, 0.5).unwrap();
+        assert!(trimmed.samples.is_empty());
+    }
+
+    #[test]
+    fn test_trim_negative_time() {
+        let buffer = AudioBuffer {
+            samples: vec![1.0; 100],
+            sample_rate: 100,
+            channels: 1,
+        };
+        assert!(trim(&buffer, -1.0, 0.5).is_err());
+    }
+
+    #[test]
+    fn test_trim_end_beyond_duration_clamps() {
+        let buffer = AudioBuffer {
+            samples: vec![1.0; 100],
+            sample_rate: 100,
+            channels: 1,
+        };
+        // Buffer is 1s, trim 0.0-5.0 should clamp to 0.0-1.0
+        let trimmed = trim(&buffer, 0.0, 5.0).unwrap();
+        assert_eq!(trimmed.samples.len(), 100);
+    }
 }

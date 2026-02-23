@@ -111,4 +111,75 @@ mod tests {
         assert!((buffer.samples[6] - 0.8).abs() < 1e-6);
         assert!((buffer.samples[9] - 0.2).abs() < 1e-6);
     }
+
+    #[test]
+    fn test_fade_in_zero_duration() {
+        let original = vec![1.0; 10];
+        let mut buffer = AudioBuffer {
+            samples: original.clone(),
+            sample_rate: 1,
+            channels: 1,
+        };
+        fade_in(&mut buffer, 0.0);
+        assert_eq!(buffer.samples, original);
+    }
+
+    #[test]
+    fn test_fade_in_negative_duration() {
+        let original = vec![1.0; 10];
+        let mut buffer = AudioBuffer {
+            samples: original.clone(),
+            sample_rate: 1,
+            channels: 1,
+        };
+        fade_in(&mut buffer, -5.0);
+        assert_eq!(buffer.samples, original);
+    }
+
+    #[test]
+    fn test_fade_in_exceeding_duration() {
+        let mut buffer = AudioBuffer {
+            samples: vec![1.0; 5],
+            sample_rate: 1,
+            channels: 1,
+        };
+        // Fade in 100s on a 5-sample buffer → clamped to full buffer
+        fade_in(&mut buffer, 100.0);
+        assert!((buffer.samples[0] - 0.0).abs() < 1e-6);
+        assert!(buffer.samples[4] > 0.0);
+    }
+
+    #[test]
+    fn test_fade_out_zero_duration() {
+        let original = vec![1.0; 10];
+        let mut buffer = AudioBuffer {
+            samples: original.clone(),
+            sample_rate: 1,
+            channels: 1,
+        };
+        fade_out(&mut buffer, 0.0);
+        assert_eq!(buffer.samples, original);
+    }
+
+    #[test]
+    fn test_fade_in_empty_buffer() {
+        let mut buffer = AudioBuffer {
+            samples: vec![],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        fade_in(&mut buffer, 1.0);
+        assert!(buffer.samples.is_empty());
+    }
+
+    #[test]
+    fn test_fade_out_empty_buffer() {
+        let mut buffer = AudioBuffer {
+            samples: vec![],
+            sample_rate: 44100,
+            channels: 1,
+        };
+        fade_out(&mut buffer, 1.0);
+        assert!(buffer.samples.is_empty());
+    }
 }

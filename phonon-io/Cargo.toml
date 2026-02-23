@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 phonon-core = { path = "../phonon-core", version = "0.1.0" }
+phonon-wav = { path = "../phonon-wav", version = "0.1.0" }
 thiserror = "1.0"
 tracing = "0.1"
 symphonia = { version = "0.5", features = ["all"] }

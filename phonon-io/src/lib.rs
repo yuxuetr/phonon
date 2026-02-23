@@ -8,6 +8,7 @@ use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
+use std::ffi::OsStr;
 use tracing::{info, instrument};
 
 /// Reads an audio file and decodes it into an AudioBuffer.
@@ -16,7 +17,7 @@ use tracing::{info, instrument};
 #[instrument(skip(path), fields(path = %path.as_ref().display()))]
 pub fn read_audio<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
     let path = path.as_ref();
-    let src = File::open(path).map_err(|e| PhononError::Io(e))?;
+    let src = File::open(path).map_err(PhononError::Io)?;
     
     // Create the media source stream.
     let mss = MediaSourceStream::new(Box::new(src), Default::default());
@@ -36,7 +37,7 @@ pub fn read_audio<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
     // Probe the media source.
     let probed = symphonia::default::get_probe()
         .format(&hint, mss, &fmt_opts, &meta_opts)
-        .map_err(|e| PhononError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        .map_err(|e| PhononError::Io(std::io::Error::other(e.to_string())))?;
 
     // Get the instantiated format reader.
     let mut format = probed.format;
@@ -116,4 +117,31 @@ pub fn read_audio<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
         sample_rate,
         channels,
     })
+}
+
+/// Writes an AudioBuffer to an audio file.
+///
+/// The output format is determined by the file extension:
+/// - `.wav` — WAV format (16-bit PCM) via phonon-wav
+///
+/// Future versions will support MP3, FLAC, and other formats.
+#[instrument(skip(buffer, path), fields(path = %path.as_ref().display(), duration = buffer.duration_secs()))]
+pub fn write_audio<P: AsRef<Path>>(path: P, buffer: &AudioBuffer) -> Result<()> {
+    let path = path.as_ref();
+    let extension = path.extension().and_then(OsStr::to_str).unwrap_or("wav");
+
+    match extension.to_lowercase().as_str() {
+        "wav" => {
+            phonon_wav::write_wav(path, buffer)?;
+        }
+        other => {
+            return Err(PhononError::Wav(format!(
+                "Unsupported output format: .{}. Currently only WAV is supported.",
+                other
+            )));
+        }
+    }
+
+    info!("Audio written successfully");
+    Ok(())
 }
