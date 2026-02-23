@@ -1,4 +1,5 @@
 use crate::{AudioBuffer, PhononError, Result};
+use rayon::prelude::*;
 
 /// Concatenates two audio buffers with a crossfade transition.
 ///
@@ -84,12 +85,31 @@ pub fn crossfade(
     samples.extend_from_slice(&buffer1.samples[..b1_head_end]);
 
     // Part 2: Crossfade overlap region
-    for i in 0..fade_len {
-        let t = i as f32 / fade_len as f32;
-        let s1 = buffer1.samples[b1_head_end + i] * (1.0 - t);
-        let s2 = buffer2.samples[i] * t;
-        samples.push((s1 + s2).clamp(-1.0, 1.0));
-    }
+    /// Minimum sample count before engaging parallel processing.
+    const PAR_THRESHOLD: usize = 131072;
+
+    let overlap: Vec<f32> = if fade_len >= PAR_THRESHOLD {
+        let b1_tail = &buffer1.samples[b1_head_end..b1_head_end + fade_len];
+        let b2_head = &buffer2.samples[..fade_len];
+        let inv_fade = 1.0 / fade_len as f32;
+        (0..fade_len)
+            .into_par_iter()
+            .map(|i| {
+                let t = i as f32 * inv_fade;
+                (b1_tail[i] * (1.0 - t) + b2_head[i] * t).clamp(-1.0, 1.0)
+            })
+            .collect()
+    } else {
+        let mut out = Vec::with_capacity(fade_len);
+        for i in 0..fade_len {
+            let t = i as f32 / fade_len as f32;
+            let s1 = buffer1.samples[b1_head_end + i] * (1.0 - t);
+            let s2 = buffer2.samples[i] * t;
+            out.push((s1 + s2).clamp(-1.0, 1.0));
+        }
+        out
+    };
+    samples.extend_from_slice(&overlap);
 
     // Part 3: Non-overlapping tail of buffer2
     samples.extend_from_slice(&buffer2.samples[fade_len..]);

@@ -4110,6 +4110,7 @@ dependencies = [
  "criterion",
  "num-complex",
  "num-traits",
+ "rayon",
  "rustfft",
  "thiserror 1.0.69",
  "tracing",

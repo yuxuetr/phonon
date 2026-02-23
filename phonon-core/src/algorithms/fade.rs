@@ -1,4 +1,8 @@
 use crate::AudioBuffer;
+use rayon::prelude::*;
+
+/// Minimum sample count before engaging parallel processing.
+const PAR_THRESHOLD: usize = 131072;
 
 /// Applies a linear fade-in to the beginning of the audio buffer.
 ///
@@ -19,13 +23,16 @@ pub fn fade_in(buffer: &mut AudioBuffer, duration_secs: f64) {
         return;
     }
 
-    for i in 0..fade_len {
-        // Linear interpolation from 0.0 to 1.0
-        // Ideally we should process channels together to keep stereo image stable,
-        // but for linear fade on interleaved buffer, applying gain per sample works mathematically the same.
-        // gain = i / fade_len
-        let gain = i as f32 / fade_len as f32;
-        buffer.samples[i] *= gain;
+    let inv_fade = 1.0 / fade_len as f32;
+    if fade_len >= PAR_THRESHOLD {
+        buffer.samples[..fade_len]
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(i, s)| *s *= i as f32 * inv_fade);
+    } else {
+        for i in 0..fade_len {
+            buffer.samples[i] *= i as f32 * inv_fade;
+        }
     }
 }
 
@@ -50,13 +57,18 @@ pub fn fade_out(buffer: &mut AudioBuffer, duration_secs: f64) {
     }
 
     let start_idx = total_len - fade_len;
+    let inv_fade = 1.0 / fade_len as f32;
 
-    for i in 0..fade_len {
-        let idx = start_idx + i;
-        // Linear interpolation from 1.0 to 0.0
-        // gain = 1.0 - (i / fade_len)
-        let gain = 1.0 - (i as f32 / fade_len as f32);
-        buffer.samples[idx] *= gain;
+    if fade_len >= PAR_THRESHOLD {
+        buffer.samples[start_idx..]
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(i, s)| *s *= 1.0 - i as f32 * inv_fade);
+    } else {
+        for i in 0..fade_len {
+            let gain = 1.0 - (i as f32 * inv_fade);
+            buffer.samples[start_idx + i] *= gain;
+        }
     }
 }
 

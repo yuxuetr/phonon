@@ -1,6 +1,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use phonon_core::{
-    compress, compute_spectrum, crossfade, generate_signal, mix, normalize, resample,
+    adjust_volume, compress, compute_spectrum, crossfade, fade_in, fade_out,
+    generate_signal, mix, normalize, peak, resample, rms,
     AudioBuffer, CompressorConfig, Waveform,
 };
 
@@ -23,7 +24,7 @@ fn make_sine(duration_secs: f64, sample_rate: u32) -> AudioBuffer {
 fn bench_resample(c: &mut Criterion) {
     let mut group = c.benchmark_group("resample");
 
-    for &duration in &[0.5, 1.0, 5.0] {
+    for &duration in &[0.5, 1.0, 5.0, 10.0] {
         let buf = make_sine(duration, 44100);
         group.bench_with_input(
             BenchmarkId::new("44100→48000", format!("{duration}s")),
@@ -34,15 +35,17 @@ fn bench_resample(c: &mut Criterion) {
         );
     }
 
-    // Downsample benchmark
-    let buf = make_sine(1.0, 48000);
-    group.bench_with_input(
-        BenchmarkId::new("48000→16000", "1s"),
-        &buf,
-        |b, buf| {
-            b.iter(|| resample(buf, 16000));
-        },
-    );
+    // Downsample benchmarks
+    for &(dur, label) in &[(1.0, "1s"), (5.0, "5s")] {
+        let buf = make_sine(dur, 48000);
+        group.bench_with_input(
+            BenchmarkId::new("48000→16000", label),
+            &buf,
+            |b, buf| {
+                b.iter(|| resample(buf, 16000));
+            },
+        );
+    }
 
     group.finish();
 }
@@ -50,7 +53,7 @@ fn bench_resample(c: &mut Criterion) {
 fn bench_mix(c: &mut Criterion) {
     let mut group = c.benchmark_group("mix");
 
-    for &duration in &[0.5, 1.0, 5.0] {
+    for &duration in &[0.5, 1.0, 5.0, 10.0, 30.0] {
         let buf1 = make_sine(duration, 44100);
         let buf2 = make_sine(duration, 44100);
         group.bench_with_input(
@@ -68,7 +71,7 @@ fn bench_mix(c: &mut Criterion) {
 fn bench_normalize(c: &mut Criterion) {
     let mut group = c.benchmark_group("normalize");
 
-    for &duration in &[0.5, 1.0, 5.0] {
+    for &duration in &[0.5, 1.0, 5.0, 10.0, 30.0] {
         let buf = make_sine(duration, 44100);
         group.bench_with_input(
             BenchmarkId::new("to_peak_1.0", format!("{duration}s")),
@@ -106,15 +109,21 @@ fn bench_compress(c: &mut Criterion) {
         });
     }
 
-    // Longer buffer with voice preset
-    let buf5 = make_sine(5.0, 44100);
-    group.bench_with_input(BenchmarkId::new("voice", "5s"), &buf5, |b, buf| {
-        let mut clone = buf.clone();
-        b.iter(|| {
-            clone.samples.copy_from_slice(&buf.samples);
-            compress(&mut clone, &CompressorConfig::voice());
-        });
-    });
+    // Longer buffers with voice preset
+    for &duration in &[5.0, 10.0] {
+        let buf_long = make_sine(duration, 44100);
+        group.bench_with_input(
+            BenchmarkId::new("voice", format!("{duration}s")),
+            &buf_long,
+            |b, buf| {
+                let mut clone = buf.clone();
+                b.iter(|| {
+                    clone.samples.copy_from_slice(&buf.samples);
+                    compress(&mut clone, &CompressorConfig::voice());
+                });
+            },
+        );
+    }
 
     group.finish();
 }
@@ -153,6 +162,17 @@ fn bench_crossfade(c: &mut Criterion) {
         );
     }
 
+    // Larger buffers with longer crossfade to test parallelism
+    let buf_long1 = make_sine(10.0, 44100);
+    let buf_long2 = make_sine(10.0, 44100);
+    group.bench_with_input(
+        BenchmarkId::new("10s+10s", "2000ms"),
+        &(buf_long1, buf_long2),
+        |b, (b1, b2)| {
+            b.iter(|| crossfade(b1, b2, 2.0));
+        },
+    );
+
     group.finish();
 }
 
@@ -177,6 +197,99 @@ fn bench_generators(c: &mut Criterion) {
     group.finish();
 }
 
+// ---------------------------------------------------------------------------
+// Fade In / Fade Out
+// ---------------------------------------------------------------------------
+
+fn bench_fade(c: &mut Criterion) {
+    let mut group = c.benchmark_group("fade");
+
+    for &duration in &[1.0, 5.0, 10.0, 30.0] {
+        let buf = make_sine(duration, 44100);
+
+        group.bench_with_input(
+            BenchmarkId::new("fade_in", format!("{duration}s")),
+            &buf,
+            |b, buf| {
+                let mut clone = buf.clone();
+                b.iter(|| {
+                    clone.samples.copy_from_slice(&buf.samples);
+                    fade_in(&mut clone, duration / 2.0);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("fade_out", format!("{duration}s")),
+            &buf,
+            |b, buf| {
+                let mut clone = buf.clone();
+                b.iter(|| {
+                    clone.samples.copy_from_slice(&buf.samples);
+                    fade_out(&mut clone, duration / 2.0);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// Volume
+// ---------------------------------------------------------------------------
+
+fn bench_volume(c: &mut Criterion) {
+    let mut group = c.benchmark_group("volume");
+
+    for &duration in &[1.0, 5.0, 10.0, 30.0] {
+        let buf = make_sine(duration, 44100);
+        group.bench_with_input(
+            BenchmarkId::new("adjust_0.5x", format!("{duration}s")),
+            &buf,
+            |b, buf| {
+                let mut clone = buf.clone();
+                b.iter(|| {
+                    clone.samples.copy_from_slice(&buf.samples);
+                    adjust_volume(&mut clone, 0.5);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// Loudness (RMS + Peak)
+// ---------------------------------------------------------------------------
+
+fn bench_loudness(c: &mut Criterion) {
+    let mut group = c.benchmark_group("loudness");
+
+    for &duration in &[1.0, 5.0, 10.0, 30.0] {
+        let buf = make_sine(duration, 44100);
+
+        group.bench_with_input(
+            BenchmarkId::new("rms", format!("{duration}s")),
+            &buf,
+            |b, buf| {
+                b.iter(|| rms(buf));
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("peak", format!("{duration}s")),
+            &buf,
+            |b, buf| {
+                b.iter(|| peak(buf));
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_resample,
@@ -186,5 +299,8 @@ criterion_group!(
     bench_spectrum,
     bench_crossfade,
     bench_generators,
+    bench_fade,
+    bench_volume,
+    bench_loudness,
 );
 criterion_main!(benches);

@@ -1,4 +1,5 @@
 use crate::{AudioBuffer, PhononError, Result};
+use rayon::prelude::*;
 use tracing::instrument;
 
 /// Mixes two audio buffers together.
@@ -43,18 +44,30 @@ pub fn mix(buffer1: &AudioBuffer, buffer2: &AudioBuffer) -> Result<AudioBuffer> 
     let len1 = buffer1.samples.len();
     let len2 = buffer2.samples.len();
     let max_len = len1.max(len2);
-    
-    let mut mixed_samples = Vec::with_capacity(max_len);
 
-    for i in 0..max_len {
-        let s1 = if i < len1 { buffer1.samples[i] } else { 0.0 };
-        let s2 = if i < len2 { buffer2.samples[i] } else { 0.0 };
-        
-        // Simple additive mixing with hard clipping (clamp)
-        // In future phases, we might want soft clipping or compressor
-        let mixed = (s1 + s2).clamp(-1.0, 1.0);
-        mixed_samples.push(mixed);
-    }
+    /// Minimum sample count before engaging parallel processing.
+    const PAR_THRESHOLD: usize = 131072;
+
+    let mixed_samples = if max_len >= PAR_THRESHOLD {
+        let s1 = &buffer1.samples;
+        let s2 = &buffer2.samples;
+        (0..max_len)
+            .into_par_iter()
+            .map(|i| {
+                let v1 = if i < len1 { s1[i] } else { 0.0 };
+                let v2 = if i < len2 { s2[i] } else { 0.0 };
+                (v1 + v2).clamp(-1.0, 1.0)
+            })
+            .collect()
+    } else {
+        let mut out = Vec::with_capacity(max_len);
+        for i in 0..max_len {
+            let s1 = if i < len1 { buffer1.samples[i] } else { 0.0 };
+            let s2 = if i < len2 { buffer2.samples[i] } else { 0.0 };
+            out.push((s1 + s2).clamp(-1.0, 1.0));
+        }
+        out
+    };
 
     Ok(AudioBuffer {
         samples: mixed_samples,

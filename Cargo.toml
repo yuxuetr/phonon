@@ -60,6 +60,7 @@ msedge-tts = "0.3"
 num-complex = "0.4.6"
 num-traits = "0.2.19"
 rustfft = "6.4.1"
+rayon = "1.10"
 
 # CLI
 clap = { version = "4.4", features = ["derive"] }

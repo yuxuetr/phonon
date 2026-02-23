@@ -1,4 +1,8 @@
 use crate::AudioBuffer;
+use rayon::prelude::*;
+
+/// Minimum sample count before engaging parallel processing.
+const PAR_THRESHOLD: usize = 131072;
 
 /// Adjusts the volume of an audio buffer by a gain factor.
 ///
@@ -16,8 +20,12 @@ pub fn adjust_volume(buffer: &mut AudioBuffer, gain: f32) {
         return; // No change needed
     }
 
-    for sample in &mut buffer.samples {
-        *sample = (*sample * gain).clamp(-1.0, 1.0);
+    if buffer.samples.len() >= PAR_THRESHOLD {
+        buffer.samples.par_iter_mut().for_each(|s| *s = (*s * gain).clamp(-1.0, 1.0));
+    } else {
+        for sample in &mut buffer.samples {
+            *sample = (*sample * gain).clamp(-1.0, 1.0);
+        }
     }
 }
 

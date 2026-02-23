@@ -1,4 +1,5 @@
 use crate::{AudioBuffer, PhononError, Result};
+use rayon::prelude::*;
 
 /// Resamples the audio buffer to a new sample rate using windowed sinc interpolation.
 ///
@@ -46,9 +47,13 @@ pub fn resample_sinc(
     // When downsampling, we need to scale the sinc filter to avoid aliasing
     let filter_scale = if ratio > 1.0 { 1.0 / ratio } else { 1.0 };
 
-    let mut new_samples = Vec::with_capacity(new_frames * ch);
+    /// Minimum output frame count before engaging parallel processing.
+    const PAR_THRESHOLD: usize = 2048;
 
-    for i in 0..new_frames {
+    let samples = &buffer.samples;
+
+    // Compute one output frame (ch samples) into `out`.
+    let compute_frame = |i: usize, out: &mut [f32]| {
         let src_pos = i as f64 * ratio;
         let src_floor = src_pos.floor() as i64;
 
@@ -65,16 +70,28 @@ pub fn resample_sinc(
                 }
                 let x = (src_pos - j as f64) * filter_scale;
                 let w = lanczos_kernel(x, a);
-                sum += buffer.samples[j as usize * ch + c] as f64 * w;
+                sum += samples[j as usize * ch + c] as f64 * w;
                 weight_sum += w;
             }
 
-            let sample = if weight_sum.abs() > 1e-12 {
-                (sum / weight_sum) as f32
+            out[c] = if weight_sum.abs() > 1e-12 {
+                ((sum / weight_sum) as f32).clamp(-1.0, 1.0)
             } else {
                 0.0
             };
-            new_samples.push(sample.clamp(-1.0, 1.0));
+        }
+    };
+
+    let mut new_samples = vec![0.0f32; new_frames * ch];
+
+    if new_frames >= PAR_THRESHOLD {
+        new_samples
+            .par_chunks_mut(ch)
+            .enumerate()
+            .for_each(|(i, out)| compute_frame(i, out));
+    } else {
+        for i in 0..new_frames {
+            compute_frame(i, &mut new_samples[i * ch..(i + 1) * ch]);
         }
     }
 

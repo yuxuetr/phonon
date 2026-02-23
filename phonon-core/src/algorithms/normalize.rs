@@ -1,4 +1,8 @@
 use crate::AudioBuffer;
+use rayon::prelude::*;
+
+/// Minimum sample count before engaging parallel processing.
+const PAR_THRESHOLD: usize = 131072;
 
 /// Normalizes the audio buffer to a target peak amplitude.
 ///
@@ -26,16 +30,28 @@ pub fn normalize(buffer: &mut AudioBuffer, target_peak: f32) {
         return; // No-op for invalid target
     }
 
+    let use_par = buffer.samples.len() >= PAR_THRESHOLD;
+
     // Find the current peak amplitude
-    let current_peak = buffer.samples.iter()
-        .map(|s| s.abs())
-        .fold(0.0f32, f32::max);
+    let current_peak = if use_par {
+        buffer.samples.par_iter()
+            .map(|s| s.abs())
+            .reduce(|| 0.0f32, f32::max)
+    } else {
+        buffer.samples.iter()
+            .map(|s| s.abs())
+            .fold(0.0f32, f32::max)
+    };
 
     // Avoid division by zero and unnecessary processing
     if current_peak > 0.0 && (current_peak - target_peak).abs() > 1e-6 {
         let gain = target_peak / current_peak;
-        for sample in &mut buffer.samples {
-            *sample *= gain;
+        if use_par {
+            buffer.samples.par_iter_mut().for_each(|s| *s *= gain);
+        } else {
+            for sample in &mut buffer.samples {
+                *sample *= gain;
+            }
         }
     }
 }

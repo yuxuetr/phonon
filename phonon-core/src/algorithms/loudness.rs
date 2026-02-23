@@ -1,4 +1,8 @@
 use crate::AudioBuffer;
+use rayon::prelude::*;
+
+/// Minimum sample count before engaging parallel processing.
+const PAR_THRESHOLD: usize = 131072;
 
 /// Computes the loudness of the audio buffer in dBFS (decibels relative to full scale).
 ///
@@ -30,11 +34,15 @@ pub fn rms(buffer: &AudioBuffer) -> f32 {
         return 0.0;
     }
 
-    let sum_squares: f64 = buffer
-        .samples
-        .iter()
-        .map(|&s| (s as f64) * (s as f64))
-        .sum();
+    let sum_squares: f64 = if buffer.samples.len() >= PAR_THRESHOLD {
+        buffer.samples.par_iter()
+            .map(|&s| (s as f64) * (s as f64))
+            .sum()
+    } else {
+        buffer.samples.iter()
+            .map(|&s| (s as f64) * (s as f64))
+            .sum()
+    };
 
     (sum_squares / buffer.samples.len() as f64).sqrt() as f32
 }
@@ -45,11 +53,15 @@ pub fn rms(buffer: &AudioBuffer) -> f32 {
 ///
 /// Equivalent to pydub's `.max` property (normalized to float).
 pub fn peak(buffer: &AudioBuffer) -> f32 {
-    buffer
-        .samples
-        .iter()
-        .map(|s| s.abs())
-        .fold(0.0_f32, f32::max)
+    if buffer.samples.len() >= PAR_THRESHOLD {
+        buffer.samples.par_iter()
+            .map(|s| s.abs())
+            .reduce(|| 0.0_f32, f32::max)
+    } else {
+        buffer.samples.iter()
+            .map(|s| s.abs())
+            .fold(0.0_f32, f32::max)
+    }
 }
 
 /// Computes the peak amplitude in dBFS.
@@ -85,8 +97,12 @@ pub fn adjust_volume_db(buffer: &mut AudioBuffer, db: f32) {
     // Convert dB to linear gain: gain = 10^(dB/20)
     let gain = 10.0_f32.powf(db / 20.0);
 
-    for sample in &mut buffer.samples {
-        *sample = (*sample * gain).clamp(-1.0, 1.0);
+    if buffer.samples.len() >= PAR_THRESHOLD {
+        buffer.samples.par_iter_mut().for_each(|s| *s = (*s * gain).clamp(-1.0, 1.0));
+    } else {
+        for sample in &mut buffer.samples {
+            *sample = (*sample * gain).clamp(-1.0, 1.0);
+        }
     }
 }
 
