@@ -134,7 +134,7 @@ mod tests {
         // Verify we can decode it back via Symphonia
         let decoded = crate::read_audio(&tmp)?;
         assert_eq!(decoded.sample_rate, sample_rate);
-        assert!(decoded.samples.len() > 0);
+        assert!(!decoded.samples.is_empty());
 
         let _ = std::fs::remove_file(&tmp);
         Ok(())

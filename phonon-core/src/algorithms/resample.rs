@@ -205,11 +205,12 @@ mod tests {
         // then resample back. The result should closely match the original.
         let sr = 44100_u32;
         let n = 4410; // 0.1 seconds
-        let mut samples = Vec::with_capacity(n);
-        for i in 0..n {
-            let t = i as f64 / sr as f64;
-            samples.push((t * 440.0 * 2.0 * std::f64::consts::PI).sin() as f32);
-        }
+        let samples: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f64 / sr as f64;
+                (t * 440.0 * 2.0 * std::f64::consts::PI).sin() as f32
+            })
+            .collect();
 
         let original = AudioBuffer { samples: samples.clone(), sample_rate: sr, channels: 1 };
         let up = resample_sinc(&original, 48000, 16).unwrap();
@@ -218,13 +219,11 @@ mod tests {
         // Compare mid-section to avoid edge effects
         let start = 500;
         let end = n.min(back.samples.len()) - 500;
-        let mut max_err: f32 = 0.0;
-        for i in start..end {
-            let err = (back.samples[i] - samples[i]).abs();
-            if err > max_err {
-                max_err = err;
-            }
-        }
+        let max_err = back.samples[start..end]
+            .iter()
+            .zip(&samples[start..end])
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
         assert!(max_err < 0.02, "Sinc roundtrip max error too high: {max_err}");
     }
 
@@ -233,11 +232,12 @@ mod tests {
         // Sinc should have lower error than linear for a pure tone roundtrip
         let sr = 44100_u32;
         let n = 4410;
-        let mut samples = Vec::with_capacity(n);
-        for i in 0..n {
-            let t = i as f64 / sr as f64;
-            samples.push((t * 1000.0 * 2.0 * std::f64::consts::PI).sin() as f32);
-        }
+        let samples: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f64 / sr as f64;
+                (t * 1000.0 * 2.0 * std::f64::consts::PI).sin() as f32
+            })
+            .collect();
         let original = AudioBuffer { samples: samples.clone(), sample_rate: sr, channels: 1 };
 
         let sinc_up = resample_sinc(&original, 48000, 16).unwrap();
@@ -249,13 +249,13 @@ mod tests {
         let calc_rms_err = |resampled: &[f32]| -> f64 {
             let start = 500;
             let end = n.min(resampled.len()) - 500;
-            let mut sum = 0.0f64;
-            let mut count = 0;
-            for i in start..end {
-                let err = (resampled[i] - samples[i]) as f64;
-                sum += err * err;
-                count += 1;
-            }
+            let (sum, count) = resampled[start..end]
+                .iter()
+                .zip(&samples[start..end])
+                .fold((0.0f64, 0usize), |(sum, count), (a, b)| {
+                    let err = (*a - *b) as f64;
+                    (sum + err * err, count + 1)
+                });
             (sum / count as f64).sqrt()
         };
 

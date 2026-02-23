@@ -6,6 +6,7 @@ Core audio buffer and DSP algorithms for the Phonon audio engine.
 
 - `AudioBuffer` — unified audio representation (`Vec<f32>`, interleaved, `[-1.0, 1.0]`)
 - **19 algorithm modules**: mix, merge, trim, crossfade, overlay, resample, channel conversion, normalize, volume, fade in/out, reverse, repeat, speed change, biquad filters, FFT spectrum, dynamic range compressor, signal generators, loudness measurement (RMS / peak / dBFS), silence detection
+- **Sinc resampling** — high-quality Lanczos-windowed sinc interpolation (`resample_sinc`), used by default; linear interpolation still available via `resample_linear`
 
 ## Usage
 

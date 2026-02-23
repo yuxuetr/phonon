@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn test_edge_tts_creation() {
         let tts = EdgeTts::new();
-        let _default = EdgeTts::default();
+        let _default = EdgeTts;
         // Just verify construction works
         let _ = format!("{tts:?}");
     }

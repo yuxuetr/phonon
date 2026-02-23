@@ -10,8 +10,8 @@ Phonon is organized as a Rust workspace with the following crates:
 |---|---|
 | `phonon-core` | Core audio buffer, DSP algorithms (mix, resample, normalize, FFT, compressor, etc.) |
 | `phonon-wav` | WAV file reading and writing (16-bit PCM) |
-| `phonon-io` | Multi-format audio I/O (WAV, MP3) via Symphonia + LAME |
-| `phonon-engine` | Real-time audio playback with pause/resume/seek/volume + streaming support |
+| `phonon-io` | Multi-format audio I/O — read any format via Symphonia, write WAV/MP3/FLAC/OGG/AAC with streaming encoders |
+| `phonon-engine` | Real-time audio playback with pause/resume/seek/volume, streaming support, and effects chain |
 | `phonon-ai` | AI integrations — TTS (OpenAI, Edge, ElevenLabs), STT (Whisper), sound generation |
 | `phonon-podcast` | Podcast generation pipeline — script → TTS → assembly with chapters & subtitles |
 | `phonon-video` | Video audio track extraction/replacement via ffmpeg |
@@ -39,7 +39,7 @@ cargo run -p phonon-server
 
 ### Audio Processing (phonon-core)
 - Mix, merge, trim, crossfade, overlay
-- Resample, channel conversion
+- Resample (Lanczos sinc interpolation), channel conversion
 - Normalize, volume adjustment, fade in/out
 - Dynamic range compressor (voice/gentle/limiter presets)
 - FFT spectrum analysis

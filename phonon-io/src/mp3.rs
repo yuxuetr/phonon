@@ -178,13 +178,13 @@ mod tests {
 
         // Verify file exists and has content
         let metadata = std::fs::metadata(&tmp)
-            .map_err(|e| PhononError::Io(e))?;
+            .map_err(PhononError::Io)?;
         assert!(metadata.len() > 0, "MP3 file should not be empty");
 
         // Verify we can decode it back via phonon-io
         let decoded = crate::read_audio(&tmp)?;
         assert_eq!(decoded.sample_rate, sample_rate);
-        assert!(decoded.samples.len() > 0);
+        assert!(!decoded.samples.is_empty());
 
         let _ = std::fs::remove_file(&tmp);
         Ok(())
@@ -214,7 +214,7 @@ mod tests {
         write_mp3(&tmp, &buffer, &Mp3Config::default())?;
 
         let metadata = std::fs::metadata(&tmp)
-            .map_err(|e| PhononError::Io(e))?;
+            .map_err(PhononError::Io)?;
         assert!(metadata.len() > 0);
 
         let decoded = crate::read_audio(&tmp)?;
@@ -242,9 +242,9 @@ mod tests {
         write_mp3(&tmp_320, &buffer, &config_320)?;
 
         let size_128 = std::fs::metadata(&tmp_128)
-            .map_err(|e| PhononError::Io(e))?.len();
+            .map_err(PhononError::Io)?.len();
         let size_320 = std::fs::metadata(&tmp_320)
-            .map_err(|e| PhononError::Io(e))?.len();
+            .map_err(PhononError::Io)?.len();
 
         // Higher bitrate should produce a larger file
         assert!(size_320 > size_128, "320k ({size_320}) should be larger than 128k ({size_128})");

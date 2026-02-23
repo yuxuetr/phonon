@@ -9,6 +9,7 @@ Real-time audio playback engine for the Phonon audio engine.
 - Volume adjustment (0.0–2.0)
 - Streaming mode: append samples while playing
 - Automatic sample rate and channel matching helpers
+- **Real-time effects chain**: `AudioEffect` trait with built-in effects — `VolumeEffect`, `LowPassEffect`, `HighPassEffect`, `CompressorEffect`
 
 ## Usage
 
@@ -25,6 +26,11 @@ player.resume();
 player.seek(1.5)?;
 player.set_volume(0.8);
 player.stop();
+
+// Add real-time effects
+use phonon_engine::effects::{LowPassEffect, CompressorEffect};
+player.add_effect(Box::new(LowPassEffect::new(4000.0, 44100)));
+player.add_effect(Box::new(CompressorEffect::voice()));
 ```
 
 ## Requirements
