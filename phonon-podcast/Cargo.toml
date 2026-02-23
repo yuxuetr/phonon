@@ -8,13 +8,13 @@ repository.workspace = true
 description = "Podcast generation pipeline for Phonon — from script to finished audio"
 
 [dependencies]
-phonon-core = { path = "../phonon-core", version = "0.1.0" }
-phonon-ai = { path = "../phonon-ai", version = "0.1.0" }
-phonon-wav = { path = "../phonon-wav", version = "0.1.0" }
-phonon-io = { path = "../phonon-io", version = "0.1.0" }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-thiserror = "1"
-tracing = "0.1"
-tokio = { version = "1", features = ["full"] }
-futures = "0.3"
+phonon-core.workspace = true
+phonon-ai.workspace = true
+phonon-wav.workspace = true
+phonon-io.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+futures.workspace = true

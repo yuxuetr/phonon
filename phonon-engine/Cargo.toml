@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-phonon-core = { path = "../phonon-core", version = "0.1.0" }
-cpal = "0.15"
-thiserror = "1.0"
-tracing = "0.1"
+phonon-core.workspace = true
+cpal.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

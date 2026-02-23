@@ -7,14 +7,14 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-dioxus = { version = "0.7", features = ["desktop"] }
-dioxus-logger = "0.7"
-phonon-wav = { path = "../phonon-wav" }
-phonon-io = { path = "../phonon-io" }
-phonon-core = { path = "../phonon-core" }
-phonon-engine = { path = "../phonon-engine" }
-phonon-podcast = { path = "../phonon-podcast" }
-phonon-ai = { path = "../phonon-ai" }
-rfd = "0.15"
-tokio = { version = "1", features = ["rt"] }
+dioxus.workspace = true
+dioxus-logger.workspace = true
+phonon-wav.workspace = true
+phonon-io.workspace = true
+phonon-core.workspace = true
+phonon-engine.workspace = true
+phonon-podcast.workspace = true
+phonon-ai.workspace = true
+rfd.workspace = true
+tokio = { workspace = true, features = ["rt"] }
 

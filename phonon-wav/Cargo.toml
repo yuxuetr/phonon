@@ -9,7 +9,7 @@ authors = ["yuxuetr"]
 description = "WAV audio file processing library for Phonon"
 
 [dependencies]
-phonon-core = { path = "../phonon-core", version = "0.1.0" }
-hound = "3.5"
-thiserror = "1.0"
-tracing = "0.1"
+phonon-core.workspace = true
+hound.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

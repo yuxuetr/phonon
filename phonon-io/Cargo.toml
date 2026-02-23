@@ -7,9 +7,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-phonon-core = { path = "../phonon-core", version = "0.1.0" }
-phonon-wav = { path = "../phonon-wav", version = "0.1.0" }
-thiserror = "1.0"
-tracing = "0.1"
-symphonia = { version = "0.5", features = ["all"] }
-mp3lame-encoder = "0.2"
+phonon-core.workspace = true
+phonon-wav.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+symphonia.workspace = true
+mp3lame-encoder.workspace = true
