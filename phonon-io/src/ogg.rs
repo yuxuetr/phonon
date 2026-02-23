@@ -1,6 +1,6 @@
 use phonon_core::{AudioBuffer, PhononError, Result};
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::Path;
 use tracing::{info, instrument};
 
@@ -40,18 +40,19 @@ pub fn write_ogg<P: AsRef<Path>>(
         )));
     }
 
-    // Encode into an in-memory buffer first
-    let mut ogg_data: Vec<u8> = Vec::new();
-
     let sample_rate_nz = NonZero::new(buffer.sample_rate)
         .ok_or_else(|| PhononError::Wav("Sample rate must be non-zero".to_string()))?;
     let channels_nz = NonZero::new(buffer.channels as u8)
         .ok_or_else(|| PhononError::Wav("Channels must be non-zero".to_string()))?;
 
+    // Stream directly to file via BufWriter
+    let file = File::create(path.as_ref()).map_err(PhononError::Io)?;
+    let mut writer = BufWriter::new(file);
+
     let mut encoder = VorbisEncoderBuilder::new(
         sample_rate_nz,
         channels_nz,
-        &mut ogg_data,
+        &mut writer,
     )
     .map_err(|e| PhononError::Wav(format!("OGG encoder init error: {e}")))?;
 
@@ -96,11 +97,9 @@ pub fn write_ogg<P: AsRef<Path>>(
         .finish()
         .map_err(|e| PhononError::Wav(format!("OGG finish error: {e}")))?;
 
-    // Write to file
-    let mut file = File::create(path.as_ref()).map_err(PhononError::Io)?;
-    file.write_all(&ogg_data).map_err(PhononError::Io)?;
+    writer.flush().map_err(PhononError::Io)?;
 
-    info!(bytes = ogg_data.len(), "OGG Vorbis encoding complete");
+    info!("OGG Vorbis encoding complete");
     Ok(())
 }
 

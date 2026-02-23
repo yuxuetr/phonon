@@ -1,6 +1,6 @@
 use phonon_core::{AudioBuffer, PhononError, Result};
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::Path;
 use tracing::{info, instrument};
 
@@ -61,10 +61,11 @@ pub fn write_aac<P: AsRef<Path>>(
         .map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
         .collect();
 
-    // Encode in chunks — AAC-LC uses 1024 samples per frame per channel
+    // Stream encoded data directly to file
+    let file = File::create(path.as_ref()).map_err(PhononError::Io)?;
+    let mut writer = BufWriter::new(file);
+
     let frame_size = 1024 * buffer.channels as usize;
-    let mut aac_data: Vec<u8> = Vec::new();
-    // Output buffer large enough for one AAC frame (max ~768 bytes per frame per channel)
     let mut out_buf = vec![0u8; 8192];
     let mut offset = 0;
 
@@ -86,7 +87,7 @@ pub fn write_aac<P: AsRef<Path>>(
             .map_err(|e| PhononError::Wav(format!("AAC encode error: {e:?}")))?;
 
         if info.output_size > 0 {
-            aac_data.extend_from_slice(&out_buf[..info.output_size]);
+            writer.write_all(&out_buf[..info.output_size]).map_err(PhononError::Io)?;
         }
 
         offset += frame_size;
@@ -101,14 +102,12 @@ pub fn write_aac<P: AsRef<Path>>(
         if info.output_size == 0 {
             break;
         }
-        aac_data.extend_from_slice(&out_buf[..info.output_size]);
+        writer.write_all(&out_buf[..info.output_size]).map_err(PhononError::Io)?;
     }
 
-    // Write to file
-    let mut file = File::create(path.as_ref()).map_err(PhononError::Io)?;
-    file.write_all(&aac_data).map_err(PhononError::Io)?;
+    writer.flush().map_err(PhononError::Io)?;
 
-    info!(bytes = aac_data.len(), "AAC encoding complete");
+    info!("AAC encoding complete");
     Ok(())
 }
 

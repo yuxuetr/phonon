@@ -1,6 +1,6 @@
 use phonon_core::{AudioBuffer, PhononError, Result};
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::mem::MaybeUninit;
 use std::path::Path;
 use tracing::{info, instrument};
@@ -91,11 +91,13 @@ pub fn write_mp3<P: AsRef<Path>>(
         .map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
         .collect();
 
-    // Allocate output buffer (LAME recommends 1.25 * num_samples + 7200)
+    // Stream encoded data directly to file
+    let file = File::create(path.as_ref()).map_err(PhononError::Io)?;
+    let mut writer = BufWriter::new(file);
+
     let max_out_size = mp3lame_encoder::max_required_buffer_size(
         samples_i16.len() / buffer.channels as usize,
     );
-    let mut mp3_out: Vec<u8> = Vec::new();
     let mut encode_buf: Vec<MaybeUninit<u8>> =
         vec![MaybeUninit::uninit(); max_out_size.max(7200)];
 
@@ -124,27 +126,26 @@ pub fn write_mp3<P: AsRef<Path>>(
             .map_err(|e| PhononError::Wav(format!("MP3 encode error: {e:?}")))?
     };
 
-    // Copy encoded bytes to output vec
+    // Write encoded bytes directly to file
     // SAFETY: encode returns the number of valid initialized bytes
-    for item in encode_buf.iter().take(encoded_size) {
-        mp3_out.push(unsafe { item.assume_init() });
-    }
+    let encoded_slice: &[u8] = unsafe {
+        std::slice::from_raw_parts(encode_buf.as_ptr().cast::<u8>(), encoded_size)
+    };
+    writer.write_all(encoded_slice).map_err(PhononError::Io)?;
 
-    // Flush remaining data
+    // Flush remaining data from encoder
     let mut flush_buf: Vec<MaybeUninit<u8>> = vec![MaybeUninit::uninit(); 7200];
     let flush_size = encoder
         .flush::<mp3lame_encoder::FlushNoGap>(&mut flush_buf)
         .map_err(|e| PhononError::Wav(format!("MP3 flush error: {e:?}")))?;
 
-    for item in flush_buf.iter().take(flush_size) {
-        mp3_out.push(unsafe { item.assume_init() });
-    }
+    let flush_slice: &[u8] = unsafe {
+        std::slice::from_raw_parts(flush_buf.as_ptr().cast::<u8>(), flush_size)
+    };
+    writer.write_all(flush_slice).map_err(PhononError::Io)?;
+    writer.flush().map_err(PhononError::Io)?;
 
-    // Write to file
-    let mut file = File::create(path.as_ref()).map_err(PhononError::Io)?;
-    file.write_all(&mp3_out).map_err(PhononError::Io)?;
-
-    info!(bytes = mp3_out.len(), "MP3 encoding complete");
+    info!("MP3 encoding complete");
     Ok(())
 }
 
