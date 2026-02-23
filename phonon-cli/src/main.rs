@@ -116,7 +116,7 @@ enum Commands {
         #[arg(short, long)]
         factor: f64,
     },
-    /// Convert audio format (WAV ↔ MP3)
+    /// Convert audio format (WAV, MP3, FLAC, OGG)
     Convert {
         #[arg(short, long)]
         input: PathBuf,

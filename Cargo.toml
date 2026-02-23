@@ -51,6 +51,8 @@ cpal = "0.15"
 hound = "3.5"
 symphonia = { version = "0.5", features = ["all"] }
 mp3lame-encoder = "0.2"
+flacenc = { version = "0.5", default-features = false }
+vorbis_rs = "0.5"
 msedge-tts = "0.3"
 
 # Math / DSP
