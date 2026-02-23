@@ -1,0 +1,14 @@
+[package]
+name = "phonon-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+phonon-core.workspace = true
+phonon-wav.workspace = true
+phonon-io.workspace = true
+phonon-ai.workspace = true
+phonon-podcast.workspace = true
+serde_json.workspace = true

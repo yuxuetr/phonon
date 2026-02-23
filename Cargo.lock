@@ -3993,7 +3993,9 @@ dependencies = [
  "phonon-engine",
  "phonon-io",
  "phonon-podcast",
+ "phonon-video",
  "phonon-wav",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4085,6 +4087,18 @@ dependencies = [
  "phonon-wav",
  "rfd 0.15.4",
  "tokio",
+]
+
+[[package]]
+name = "phonon-tests"
+version = "0.1.0"
+dependencies = [
+ "phonon-ai",
+ "phonon-core",
+ "phonon-io",
+ "phonon-podcast",
+ "phonon-wav",
+ "serde_json",
 ]
 
 [[package]]

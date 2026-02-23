@@ -18,6 +18,13 @@ pub use mp3::{Mp3Config, write_mp3};
 /// Reads an audio file and decodes it into an AudioBuffer.
 ///
 /// Supports all formats supported by Symphonia (MP3, WAV, FLAC, OGG, AAC, etc.).
+///
+/// # Example
+///
+/// ```rust,no_run
+/// let buffer = phonon_io::read_audio("song.wav").unwrap();
+/// println!("Duration: {:.2}s", buffer.duration_secs());
+/// ```
 #[instrument(skip(path), fields(path = %path.as_ref().display()))]
 pub fn read_audio<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
     let path = path.as_ref();
@@ -128,6 +135,16 @@ pub fn read_audio<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
 /// The output format is determined by the file extension:
 /// - `.wav` — WAV format (16-bit PCM) via phonon-wav
 /// - `.mp3` — MP3 format (192 kbps default) via LAME encoder
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use phonon_core::AudioBuffer;
+///
+/// let buffer = AudioBuffer { samples: vec![0.0; 44100], sample_rate: 44100, channels: 1 };
+/// phonon_io::write_audio("output.wav", &buffer).unwrap();
+/// phonon_io::write_audio("output.mp3", &buffer).unwrap();
+/// ```
 #[instrument(skip(buffer, path), fields(path = %path.as_ref().display(), duration = buffer.duration_secs()))]
 pub fn write_audio<P: AsRef<Path>>(path: P, buffer: &AudioBuffer) -> Result<()> {
     let path = path.as_ref();

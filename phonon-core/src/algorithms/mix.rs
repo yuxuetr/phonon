@@ -16,6 +16,18 @@ use tracing::instrument;
 /// # Errors
 ///
 /// Returns an error if sample rates or channel counts do not match.
+///
+/// # Example
+///
+/// ```
+/// use phonon_core::AudioBuffer;
+/// use phonon_core::algorithms::mix::mix;
+///
+/// let b1 = AudioBuffer { samples: vec![0.5, 0.3], sample_rate: 44100, channels: 1 };
+/// let b2 = AudioBuffer { samples: vec![0.4, 0.2], sample_rate: 44100, channels: 1 };
+/// let mixed = mix(&b1, &b2).unwrap();
+/// assert!((mixed.samples[0] - 0.9).abs() < 1e-6);
+/// ```
 #[instrument(skip(buffer1, buffer2))]
 pub fn mix(buffer1: &AudioBuffer, buffer2: &AudioBuffer) -> Result<AudioBuffer> {
     if buffer1.sample_rate != buffer2.sample_rate {

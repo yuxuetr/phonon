@@ -13,6 +13,21 @@ use crate::{AudioBuffer, PhononError, Result};
 /// A new `AudioBuffer` containing the audio within the specified range.
 /// If `start_secs` is beyond the end of the audio, returns an empty buffer.
 /// If `end_secs` is beyond the end, clamps to the end.
+///
+/// # Example
+///
+/// ```
+/// use phonon_core::AudioBuffer;
+/// use phonon_core::algorithms::trim::trim;
+///
+/// let buffer = AudioBuffer {
+///     samples: vec![1.0; 100],
+///     sample_rate: 100,
+///     channels: 1,
+/// };
+/// let trimmed = trim(&buffer, 0.0, 0.5).unwrap();
+/// assert_eq!(trimmed.samples.len(), 50);
+/// ```
 pub fn trim(buffer: &AudioBuffer, start_secs: f64, end_secs: f64) -> Result<AudioBuffer> {
     if start_secs < 0.0 || end_secs < 0.0 {
         return Err(PhononError::Wav("Time cannot be negative".to_string()));

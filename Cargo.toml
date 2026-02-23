@@ -5,6 +5,7 @@ members = ["phonon-cli","phonon-core", "phonon-engine",
     "phonon-podcast",
     "phonon-video",
     "phonon-server",
+    "phonon-tests",
 ]
 resolver = "2"
 

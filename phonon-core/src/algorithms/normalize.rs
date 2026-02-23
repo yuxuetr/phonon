@@ -7,9 +7,20 @@ use crate::AudioBuffer;
 /// * `buffer` - The audio buffer to normalize. The buffer is modified in place.
 /// * `target_peak` - The target peak amplitude (usually 1.0 or less).
 ///
-/// # Returns
+/// # Example
 ///
-/// None. Modifies the buffer in place.
+/// ```
+/// use phonon_core::AudioBuffer;
+/// use phonon_core::algorithms::normalize::normalize;
+///
+/// let mut buffer = AudioBuffer {
+///     samples: vec![0.5, -0.2, 0.1],
+///     sample_rate: 44100,
+///     channels: 1,
+/// };
+/// normalize(&mut buffer, 1.0);
+/// assert!((buffer.samples[0] - 1.0).abs() < 1e-6);
+/// ```
 pub fn normalize(buffer: &mut AudioBuffer, target_peak: f32) {
     if target_peak <= 0.0 {
         return; // No-op for invalid target

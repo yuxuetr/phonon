@@ -45,6 +45,19 @@ pub type Result<T> = std::result::Result<T, PhononError>;
 /// Core audio buffer holding floating point samples.
 ///
 /// Internal representation is always `Vec<f32>` with range `[-1.0, 1.0]`.
+///
+/// # Example
+///
+/// ```
+/// use phonon_core::AudioBuffer;
+///
+/// let buffer = AudioBuffer {
+///     samples: vec![0.0; 44100 * 2],
+///     sample_rate: 44100,
+///     channels: 2,
+/// };
+/// assert!((buffer.duration_secs() - 1.0).abs() < 1e-6);
+/// ```
 #[derive(Debug, Clone)]
 pub struct AudioBuffer {
     /// Audio samples. Interleaved for multi-channel.

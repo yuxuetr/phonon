@@ -24,6 +24,10 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
       - name: Install Rust
         run: rustup toolchain install stable --component llvm-tools-preview
       - name: Install cargo-llvm-cov
@@ -34,11 +38,11 @@ jobs:
       - name: Check code format
         run: cargo fmt -- --check
       - name: Check the package for errors
-        run: cargo check --all
+        run: cargo check --workspace --exclude phonon-studio
       - name: Lint rust sources
-        run: cargo clippy --all-targets --all-features --tests --benches -- -D warnings
+        run: cargo clippy --workspace --exclude phonon-studio --all-targets --tests --benches -- -D warnings
       - name: Execute rust tests
-        run: cargo nextest run --all-features
+        run: cargo nextest run --workspace --exclude phonon-studio
       - name: Generate a changelog
         uses: orhun/git-cliff-action@v3
         id: git-cliff

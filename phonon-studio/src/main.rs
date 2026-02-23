@@ -24,6 +24,9 @@ struct AudioDisplayInfo {
     duration: f64,
     sample_count: usize,
     waveform_path: String,
+    rms: f32,
+    peak: f32,
+    peak_dbfs: f32,
 }
 
 /// Downsamples audio data for visualization (called once at load time)
@@ -93,13 +96,37 @@ fn generate_waveform_path(samples: &[f32], width: f32, height: f32) -> String {
 /// Tailwind CSS asset for desktop and web
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
+/// Effect parameters controlled by the user.
+#[derive(Clone, Debug, PartialEq)]
+struct EffectParams {
+    normalize_target: f32,
+    fade_in_secs: f64,
+    fade_out_secs: f64,
+    speed_factor: f64,
+    compress_preset: String,
+}
+
+impl Default for EffectParams {
+    fn default() -> Self {
+        Self {
+            normalize_target: 0.9,
+            fade_in_secs: 0.0,
+            fade_out_secs: 0.0,
+            speed_factor: 1.0,
+            compress_preset: "none".to_string(),
+        }
+    }
+}
+
 fn App() -> Element {
-    // Lightweight display info (cloned on render — no samples, just metadata + pre-computed SVG path)
     let mut display_info = use_signal(|| None::<AudioDisplayInfo>);
-    // Raw audio buffer behind Arc — never cloned for display, only read() for playback
     let mut audio_buffer = use_signal(|| None::<Arc<AudioBuffer>>);
     let mut status_msg = use_signal(|| "Ready".to_string());
     let mut player_state = use_signal(|| None::<AudioPlayer>);
+    let mut effects = use_signal(EffectParams::default);
+    let mut show_effects = use_signal(|| false);
+    let mut show_export = use_signal(|| false);
+    let mut export_bitrate = use_signal(|| 192_u32);
 
     rsx! {
         document::Stylesheet { href: TAILWIND_CSS }
@@ -112,6 +139,20 @@ fn App() -> Element {
                 div { class: "font-bold text-xl text-gray-100 flex items-center gap-2", "🎛️ Phonon Studio" }
                 div {
                     class: "flex gap-2",
+                    button {
+                        class: "px-3 py-2 rounded-sm shadow-sm transition hover:opacity-90 bg-neutral-700 text-white font-medium",
+                        onclick: move |_| {
+                            show_effects.set(!show_effects());
+                        },
+                        "Effects"
+                    }
+                    button {
+                        class: "px-3 py-2 rounded-sm shadow-sm transition hover:opacity-90 bg-neutral-700 text-white font-medium",
+                        onclick: move |_| {
+                            show_export.set(!show_export());
+                        },
+                        "Export"
+                    }
                     button {
                         class: "px-4 py-2 rounded-sm shadow-sm transition hover:opacity-90 bg-blue-600 text-white font-medium",
                         onclick: move |_| {
@@ -154,13 +195,16 @@ fn App() -> Element {
                                 // Pre-compute waveform path (once, not every render)
                                 let waveform = generate_waveform_path(&buffer.samples, 1000.0, 200.0);
 
-                                display_info.set(Some(AudioDisplayInfo {
+                display_info.set(Some(AudioDisplayInfo {
                                     path: path_str,
                                     sample_rate: buffer.sample_rate,
                                     channels: buffer.channels,
                                     duration: buffer.duration_secs(),
                                     sample_count: buffer.samples.len(),
                                     waveform_path: waveform,
+                                    rms: algorithms::rms(&buffer),
+                                    peak: algorithms::peak(&buffer),
+                                    peak_dbfs: algorithms::peak_dbfs(&buffer),
                                 }));
                                 audio_buffer.set(Some(Arc::new(buffer)));
                                 status_msg.set("File loaded successfully".to_string());
@@ -172,13 +216,17 @@ fn App() -> Element {
             }
 
             // --- Main Workspace ---
-            main {
-                class: "flex-1 flex flex-col items-center justify-center p-6 overflow-y-auto",
+            div {
+                class: "flex-1 flex overflow-hidden",
 
-                if let Some(info) = display_info() {
-                    // Waveform View (uses pre-computed SVG path — no processing here)
-                    div {
-                        class: "w-full max-w-5xl bg-neutral-800 border border-neutral-700 rounded-lg p-5 mb-5 shadow-lg",
+                // --- Left: main content ---
+                main {
+                    class: "flex-1 flex flex-col items-center justify-start p-6 overflow-y-auto",
+
+                    if let Some(info) = display_info() {
+                        // Waveform View
+                        div {
+                            class: "w-full max-w-5xl bg-neutral-800 border border-neutral-700 rounded-lg p-5 mb-5 shadow-lg",
                         svg {
                             width: "100%",
                             height: "200",
@@ -193,23 +241,293 @@ fn App() -> Element {
                         }
                     }
 
-                    // Info Panel
-                    div {
-                        class: "bg-neutral-800 p-4 rounded-lg border border-neutral-700 w-full max-w-5xl mt-5",
-                        div { class: "grid grid-cols-2 md:grid-cols-4 gap-4",
-                            div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "File Path" } span { class: "font-medium truncate", "{info.path}" } }
-                            div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "Sample Rate" } span { class: "font-medium", "{info.sample_rate} Hz" } }
-                            div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "Channels" } span { class: "font-medium", "{info.channels}" } }
-                            div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "Duration" } span { class: "font-medium", "{info.duration:.2}s" } }
-                            div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "Samples" } span { class: "font-medium", "{info.sample_count}" } }
+                        // Info Panel
+                        div {
+                            class: "bg-neutral-800 p-4 rounded-lg border border-neutral-700 w-full max-w-5xl mt-5",
+                            div { class: "grid grid-cols-2 md:grid-cols-4 gap-4",
+                                div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "File Path" } span { class: "font-medium truncate", "{info.path}" } }
+                                div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "Sample Rate" } span { class: "font-medium", "{info.sample_rate} Hz" } }
+                                div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "Channels" } span { class: "font-medium", "{info.channels}" } }
+                                div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "Duration" } span { class: "font-medium", "{info.duration:.2}s" } }
+                                div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "Samples" } span { class: "font-medium", "{info.sample_count}" } }
+                                div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "RMS" } span { class: "font-medium", "{info.rms:.4}" } }
+                                div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "Peak" } span { class: "font-medium", "{info.peak:.4}" } }
+                                div { class: "flex flex-col", label { class: "text-xs text-gray-500 mb-1", "Peak dBFS" } span { class: "font-medium", "{info.peak_dbfs:.1} dB" } }
+                            }
+                        }
+                    } else {
+                        // Empty State
+                        div {
+                            class: "text-center text-gray-500",
+                            h2 { class: "text-2xl font-bold mb-2", "No Audio Loaded" }
+                            p { "Click 'Open Audio File' to start editing." }
                         }
                     }
-                } else {
-                    // Empty State
-                    div {
-                        class: "text-center text-gray-500",
-                        h2 { class: "text-2xl font-bold mb-2", "No Audio Loaded" }
-                        p { "Click 'Open Audio File' to start editing." }
+                }
+
+                // --- Right sidebar: Effects & Export ---
+                if show_effects() || show_export() {
+                    aside {
+                        class: "w-72 bg-neutral-800 border-l border-neutral-700 p-4 overflow-y-auto flex flex-col gap-4",
+
+                        // Effects Panel
+                        if show_effects() {
+                            div {
+                                h3 { class: "text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3", "Effects" }
+
+                                // Normalize
+                                div { class: "mb-3",
+                                    label { class: "text-xs text-gray-500 block mb-1", "Normalize Peak" }
+                                    input {
+                                        r#type: "range",
+                                        min: "0.1",
+                                        max: "1.0",
+                                        step: "0.05",
+                                        value: "{effects().normalize_target}",
+                                        class: "w-full accent-emerald-500",
+                                        oninput: move |evt| {
+                                            if let Ok(v) = evt.value().parse::<f32>() {
+                                                effects.write().normalize_target = v;
+                                            }
+                                        },
+                                    }
+                                    span { class: "text-xs text-gray-400", "{effects().normalize_target:.2}" }
+                                }
+
+                                // Fade In
+                                div { class: "mb-3",
+                                    label { class: "text-xs text-gray-500 block mb-1", "Fade In (s)" }
+                                    input {
+                                        r#type: "range",
+                                        min: "0",
+                                        max: "5",
+                                        step: "0.1",
+                                        value: "{effects().fade_in_secs}",
+                                        class: "w-full accent-emerald-500",
+                                        oninput: move |evt| {
+                                            if let Ok(v) = evt.value().parse::<f64>() {
+                                                effects.write().fade_in_secs = v;
+                                            }
+                                        },
+                                    }
+                                    span { class: "text-xs text-gray-400", "{effects().fade_in_secs:.1}s" }
+                                }
+
+                                // Fade Out
+                                div { class: "mb-3",
+                                    label { class: "text-xs text-gray-500 block mb-1", "Fade Out (s)" }
+                                    input {
+                                        r#type: "range",
+                                        min: "0",
+                                        max: "5",
+                                        step: "0.1",
+                                        value: "{effects().fade_out_secs}",
+                                        class: "w-full accent-emerald-500",
+                                        oninput: move |evt| {
+                                            if let Ok(v) = evt.value().parse::<f64>() {
+                                                effects.write().fade_out_secs = v;
+                                            }
+                                        },
+                                    }
+                                    span { class: "text-xs text-gray-400", "{effects().fade_out_secs:.1}s" }
+                                }
+
+                                // Speed
+                                div { class: "mb-3",
+                                    label { class: "text-xs text-gray-500 block mb-1", "Speed" }
+                                    input {
+                                        r#type: "range",
+                                        min: "0.25",
+                                        max: "4.0",
+                                        step: "0.05",
+                                        value: "{effects().speed_factor}",
+                                        class: "w-full accent-emerald-500",
+                                        oninput: move |evt| {
+                                            if let Ok(v) = evt.value().parse::<f64>() {
+                                                effects.write().speed_factor = v;
+                                            }
+                                        },
+                                    }
+                                    span { class: "text-xs text-gray-400", "×{effects().speed_factor:.2}" }
+                                }
+
+                                // Compressor preset
+                                div { class: "mb-3",
+                                    label { class: "text-xs text-gray-500 block mb-1", "Compressor" }
+                                    select {
+                                        class: "w-full bg-neutral-700 text-gray-200 rounded px-2 py-1 text-sm",
+                                        value: "{effects().compress_preset}",
+                                        onchange: move |evt| {
+                                            effects.write().compress_preset = evt.value();
+                                        },
+                                        option { value: "none", "None" }
+                                        option { value: "voice", "Voice" }
+                                        option { value: "gentle", "Gentle" }
+                                        option { value: "limiter", "Limiter" }
+                                    }
+                                }
+
+                                // Apply button
+                                button {
+                                    class: "w-full px-3 py-2 rounded-sm bg-emerald-600 text-white font-medium hover:opacity-90 transition mt-2",
+                                    onclick: move |_| {
+                                        let reader = audio_buffer.read();
+                                        let Some(ref buf_arc) = *reader else { return };
+                                        let eff = effects();
+
+                                        let mut buf = AudioBuffer {
+                                            samples: buf_arc.samples.clone(),
+                                            sample_rate: buf_arc.sample_rate,
+                                            channels: buf_arc.channels,
+                                        };
+
+                                        // Apply effects
+                                        algorithms::normalize(&mut buf, eff.normalize_target);
+
+                                        if eff.fade_in_secs > 0.0 {
+                                            algorithms::fade_in(&mut buf, eff.fade_in_secs);
+                                        }
+                                        if eff.fade_out_secs > 0.0 {
+                                            algorithms::fade_out(&mut buf, eff.fade_out_secs);
+                                        }
+
+                                        if (eff.speed_factor - 1.0).abs() > 0.01 {
+                                            if let Ok(b) = algorithms::change_speed(&buf, eff.speed_factor) {
+                                                buf = b;
+                                            }
+                                        }
+
+                                        match eff.compress_preset.as_str() {
+                                            "voice" => buf = algorithms::with_compression(&buf, &algorithms::CompressorConfig::voice()),
+                                            "gentle" => buf = algorithms::with_compression(&buf, &algorithms::CompressorConfig::gentle()),
+                                            "limiter" => buf = algorithms::with_compression(&buf, &algorithms::CompressorConfig::limiter()),
+                                            _ => {}
+                                        }
+
+                                        // Update waveform and info
+                                        let waveform = generate_waveform_path(&buf.samples, 1000.0, 200.0);
+                                        let path_str = display_info().map(|i| i.path.clone()).unwrap_or_default();
+                                        display_info.set(Some(AudioDisplayInfo {
+                                            path: path_str,
+                                            sample_rate: buf.sample_rate,
+                                            channels: buf.channels,
+                                            duration: buf.duration_secs(),
+                                            sample_count: buf.samples.len(),
+                                            waveform_path: waveform,
+                                            rms: algorithms::rms(&buf),
+                                            peak: algorithms::peak(&buf),
+                                            peak_dbfs: algorithms::peak_dbfs(&buf),
+                                        }));
+
+                                        drop(reader);
+                                        audio_buffer.set(Some(Arc::new(buf)));
+                                        status_msg.set("Effects applied".to_string());
+                                    },
+                                    "Apply Effects"
+                                }
+                            }
+                        }
+
+                        // Export Panel
+                        if show_export() {
+                            div {
+                                h3 { class: "text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3", "Export" }
+
+                                // Bitrate (for MP3)
+                                div { class: "mb-3",
+                                    label { class: "text-xs text-gray-500 block mb-1", "MP3 Bitrate (kbps)" }
+                                    select {
+                                        class: "w-full bg-neutral-700 text-gray-200 rounded px-2 py-1 text-sm",
+                                        value: "{export_bitrate}",
+                                        onchange: move |evt| {
+                                            if let Ok(v) = evt.value().parse::<u32>() {
+                                                export_bitrate.set(v);
+                                            }
+                                        },
+                                        option { value: "128", "128" }
+                                        option { value: "192", selected: true, "192" }
+                                        option { value: "256", "256" }
+                                        option { value: "320", "320" }
+                                    }
+                                }
+
+                                // Export WAV
+                                button {
+                                    class: "w-full px-3 py-2 rounded-sm bg-blue-600 text-white font-medium hover:opacity-90 transition mb-2",
+                                    onclick: move |_| {
+                                        async move {
+                                            let reader = audio_buffer.read();
+                                            let Some(ref buf_arc) = *reader else {
+                                                status_msg.set("No audio loaded".to_string());
+                                                return;
+                                            };
+                                            let buf = buf_arc.clone();
+                                            drop(reader);
+
+                                            let file_handle = rfd::AsyncFileDialog::new()
+                                                .add_filter("WAV", &["wav"])
+                                                .set_file_name("output.wav")
+                                                .save_file()
+                                                .await;
+
+                                            let Some(path) = file_handle else { return };
+                                            let path_buf = path.path().to_path_buf();
+
+                                            status_msg.set("Exporting WAV...".to_string());
+                                            let result = tokio::task::spawn_blocking(move || {
+                                                phonon_wav::write_wav(&path_buf, &buf)
+                                            }).await;
+
+                                            match result {
+                                                Ok(Ok(())) => status_msg.set("WAV exported successfully".to_string()),
+                                                Ok(Err(e)) => status_msg.set(format!("Export error: {}", e)),
+                                                Err(e) => status_msg.set(format!("Task error: {}", e)),
+                                            }
+                                        }
+                                    },
+                                    "Export as WAV"
+                                }
+
+                                // Export MP3
+                                button {
+                                    class: "w-full px-3 py-2 rounded-sm bg-purple-600 text-white font-medium hover:opacity-90 transition",
+                                    onclick: move |_| {
+                                        async move {
+                                            let reader = audio_buffer.read();
+                                            let Some(ref buf_arc) = *reader else {
+                                                status_msg.set("No audio loaded".to_string());
+                                                return;
+                                            };
+                                            let buf = buf_arc.clone();
+                                            let bitrate = export_bitrate();
+                                            drop(reader);
+
+                                            let file_handle = rfd::AsyncFileDialog::new()
+                                                .add_filter("MP3", &["mp3"])
+                                                .set_file_name("output.mp3")
+                                                .save_file()
+                                                .await;
+
+                                            let Some(path) = file_handle else { return };
+                                            let path_buf = path.path().to_path_buf();
+
+                                            status_msg.set("Exporting MP3...".to_string());
+                                            let result = tokio::task::spawn_blocking(move || {
+                                                let config = phonon_io::Mp3Config { bitrate_kbps: bitrate };
+                                                phonon_io::write_mp3(&path_buf, &buf, &config)
+                                            }).await;
+
+                                            match result {
+                                                Ok(Ok(())) => status_msg.set("MP3 exported successfully".to_string()),
+                                                Ok(Err(e)) => status_msg.set(format!("Export error: {}", e)),
+                                                Err(e) => status_msg.set(format!("Task error: {}", e)),
+                                            }
+                                        }
+                                    },
+                                    "Export as MP3"
+                                }
+                            }
+                        }
                     }
                 }
             }
