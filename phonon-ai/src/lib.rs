@@ -26,12 +26,16 @@
 pub mod client;
 pub mod edge_tts;
 pub mod elevenlabs;
+pub mod sound_gen;
+pub mod stt;
 pub mod tts;
 pub mod voice;
 
 pub use client::HttpClient;
 pub use edge_tts::EdgeTts;
 pub use elevenlabs::ElevenLabsTts;
+pub use sound_gen::{HttpSoundGen, SoundGenProvider, SoundPrompt};
+pub use stt::{SttProvider, TranscribeOptions, TranscriptResult, TranscriptSegment, WhisperStt};
 pub use tts::{OpenAiTts, TtsProvider};
 pub use voice::VoiceConfig;
 

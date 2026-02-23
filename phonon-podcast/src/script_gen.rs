@@ -352,6 +352,7 @@ impl ScriptGenerator for OpenAiScriptGenerator {
             .map(|s| Segment {
                 speaker: s.speaker,
                 text: s.text,
+                language: None,
             })
             .collect();
 
@@ -488,6 +489,7 @@ mod tests {
             .map(|s| Segment {
                 speaker: s.speaker,
                 text: s.text,
+                language: None,
             })
             .collect();
 

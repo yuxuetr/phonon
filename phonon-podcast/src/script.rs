@@ -30,6 +30,12 @@ pub struct Segment {
 
     /// The text content to synthesize.
     pub text: String,
+
+    /// Optional language override for this segment (e.g. "en-US", "zh-CN").
+    /// When set, the pipeline will override the speaker's `VoiceConfig.language`
+    /// for this segment, enabling multi-language podcasts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 impl PodcastScript {

@@ -42,6 +42,8 @@ struct SharedState {
     active: AtomicBool,
     /// Volume multiplier stored as bits (f32 → u32 bits).
     volume_bits: AtomicU32,
+    /// When true, do not auto-stop when reaching the end (more samples may arrive).
+    streaming: AtomicBool,
 }
 
 use std::sync::atomic::AtomicU32;
@@ -55,6 +57,7 @@ impl SharedState {
             paused: AtomicBool::new(false),
             active: AtomicBool::new(false),
             volume_bits: AtomicU32::new(f32::to_bits(1.0)),
+            streaming: AtomicBool::new(false),
         }
     }
 
@@ -257,6 +260,47 @@ impl AudioPlayer {
         total > 0 && pos >= total
     }
 
+    /// Appends new audio samples to the playback buffer.
+    ///
+    /// This enables streaming playback: start playing immediately and keep
+    /// appending new chunks as they arrive from a TTS provider.
+    ///
+    /// If the player is not yet active, it will start playing automatically.
+    pub fn append_samples(&self, new_samples: &[f32]) -> Result<()> {
+        if new_samples.is_empty() {
+            return Ok(());
+        }
+
+        {
+            let mut samples = self
+                .state
+                .samples
+                .lock()
+                .map_err(|e| EngineError::Play(format!("Lock poisoned: {e}")))?;
+            samples.extend_from_slice(new_samples);
+            self.state
+                .total_samples
+                .store(samples.len(), Ordering::SeqCst);
+        }
+
+        // Enable streaming mode and auto-activate
+        self.state.streaming.store(true, Ordering::SeqCst);
+        if !self.state.active.load(Ordering::Relaxed) {
+            self.state.paused.store(false, Ordering::SeqCst);
+            self.state.active.store(true, Ordering::SeqCst);
+        }
+
+        Ok(())
+    }
+
+    /// Signals that no more samples will be appended.
+    ///
+    /// After calling this, the player will auto-stop when playback reaches
+    /// the end of the buffer.
+    pub fn finish_streaming(&self) {
+        self.state.streaming.store(false, Ordering::SeqCst);
+    }
+
     /// Clears the loaded audio buffer.
     pub fn clear(&self) {
         self.stop();
@@ -311,8 +355,8 @@ fn write_data(output: &mut [f32], state: &SharedState) {
 
     state.position.store(pos, Ordering::Relaxed);
 
-    // Auto-stop when finished
-    if pos >= total {
+    // Auto-stop when finished (unless streaming — more data may arrive)
+    if pos >= total && !state.streaming.load(Ordering::Relaxed) {
         state.active.store(false, Ordering::Relaxed);
     }
 }

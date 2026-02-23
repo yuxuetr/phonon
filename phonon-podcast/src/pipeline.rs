@@ -44,6 +44,7 @@ impl<T: TtsProvider> PodcastPipeline<T> {
         let concurrency = config.tts_concurrency.max(1);
 
         // Collect owned (index, text, voice) tuples up front so we can synthesize concurrently.
+        // If a segment has a language override, clone the speaker's voice config and apply it.
         let synthesis_items: Vec<_> = script
             .segments
             .iter()
@@ -55,7 +56,14 @@ impl<T: TtsProvider> PodcastPipeline<T> {
                     .ok_or_else(|| {
                         PodcastError::Script(format!("Unknown speaker: {}", segment.speaker))
                     })
-                    .cloned();
+                    .cloned()
+                    .map(|mut v| {
+                        // Apply segment-level language override if specified
+                        if let Some(ref lang) = segment.language {
+                            v.language = Some(lang.clone());
+                        }
+                        v
+                    });
                 (i, segment.text.clone(), segment.speaker.clone(), voice)
             })
             .collect();

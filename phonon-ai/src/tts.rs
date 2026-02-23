@@ -27,6 +27,33 @@ pub trait TtsProvider: Send + Sync {
         text: &str,
         voice: &VoiceConfig,
     ) -> impl Future<Output = Result<AudioBuffer, AiError>> + Send;
+
+    /// Synthesizes text and sends audio chunks to a channel as they become available.
+    ///
+    /// This enables streaming playback — the caller can start processing/playing
+    /// the first chunks before synthesis is complete.
+    ///
+    /// The default implementation calls `synthesize()` and sends the entire buffer
+    /// as a single chunk. Providers that support true streaming (like OpenAI)
+    /// may override this for lower latency.
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - The text to synthesize.
+    /// * `voice` - The voice configuration to use.
+    /// * `tx` - Channel sender for audio buffer chunks.
+    fn synthesize_streaming(
+        &self,
+        text: &str,
+        voice: &VoiceConfig,
+        tx: tokio::sync::mpsc::Sender<Result<AudioBuffer, AiError>>,
+    ) -> impl Future<Output = Result<(), AiError>> + Send {
+        async move {
+            let buffer = self.synthesize(text, voice).await;
+            let _ = tx.send(buffer).await;
+            Ok(())
+        }
+    }
 }
 
 /// OpenAI TTS provider.

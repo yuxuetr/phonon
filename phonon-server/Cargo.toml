@@ -1,0 +1,27 @@
+[package]
+name = "phonon-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "REST API server for Phonon audio engine — exposes TTS and podcast generation"
+
+[dependencies]
+phonon-core.workspace = true
+phonon-ai.workspace = true
+phonon-podcast.workspace = true
+phonon-io.workspace = true
+phonon-wav.workspace = true
+axum = "0.8"
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tempfile.workspace = true
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+[dev-dependencies]
+tower = "0.5"

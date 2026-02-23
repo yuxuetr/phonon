@@ -1,88 +1,77 @@
-# Rust 项目初始化模版
+# Phonon — 声子音频引擎
 
-## 环境设置
+A comprehensive Rust audio processing ecosystem, from low-level WAV I/O to AI-powered podcast generation.
 
-### 安装 Rust
+## Architecture
 
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
+Phonon is organized as a Rust workspace with the following crates:
 
-### 安装 VSCode 插件
+| Crate | Description |
+|---|---|
+| `phonon-core` | Core audio buffer, DSP algorithms (mix, resample, normalize, FFT, compressor, etc.) |
+| `phonon-wav` | WAV file reading and writing (16-bit PCM) |
+| `phonon-io` | Multi-format audio I/O (WAV, MP3) via Symphonia + LAME |
+| `phonon-engine` | Real-time audio playback with pause/resume/seek/volume + streaming support |
+| `phonon-ai` | AI integrations — TTS (OpenAI, Edge, ElevenLabs), STT (Whisper), sound generation |
+| `phonon-podcast` | Podcast generation pipeline — script → TTS → assembly with chapters & subtitles |
+| `phonon-video` | Video audio track extraction/replacement via ffmpeg |
+| `phonon-server` | REST API server (axum) exposing TTS and podcast generation |
+| `phonon-studio` | Desktop GUI application (Dioxus + Tauri) |
+| `phonon-cli` | Command-line interface |
 
-- crates: Rust 包管理
-- Even Better TOML: TOML 文件支持
-- Better Comments: 优化注释显示
-- Error Lens: 错误提示优化
-- GitLens: Git 增强
-- Github Copilot: 代码提示
-- indent-rainbow: 缩进显示优化
-- Prettier - Code formatter: 代码格式化
-- REST client: REST API 调试
-- rust-analyzer: Rust 语言支持
-- Rust Test lens: Rust 测试支持
-- Rust Test Explorer: Rust 测试概览
-- TODO Highlight: TODO 高亮
-- vscode-icons: 图标优化
-- YAML: YAML 文件支持
-
-### 安装 cargo generate
-
-cargo generate 是一个用于生成项目模板的工具。它可以使用已有的 github repo 作为模版生成新的项目。
+## Quick Start
 
 ```bash
-cargo install cargo-generate
+# Build all crates
+cargo build
+
+# Run tests
+cargo test --workspace
+
+# Run benchmarks
+cargo bench -p phonon-core
+
+# Start the REST API server
+cargo run -p phonon-server
 ```
 
-在新的项目会使用 `yuxuetr/rust-template` 模版生成基本的代码：
+## Features
 
-```bash
-cargo generate yuxuetr/rust-template
-```
+### Audio Processing (phonon-core)
+- Mix, merge, trim, crossfade, overlay
+- Resample, channel conversion
+- Normalize, volume adjustment, fade in/out
+- Dynamic range compressor (voice/gentle/limiter presets)
+- FFT spectrum analysis
+- Signal generators (sine, square, sawtooth, white noise)
+- Loudness measurement (RMS, peak, dBFS)
 
-### 安装 pre-commit
+### AI Integration (phonon-ai)
+- **TTS**: OpenAI, Microsoft Edge TTS, ElevenLabs
+- **STT**: OpenAI Whisper (with timed segments)
+- **Sound Generation**: Generic HTTP provider for music/SFX APIs
+- Streaming TTS support (synthesize while playing)
 
-pre-commit 是一个代码检查工具，可以在提交代码前进行代码检查。
+### Podcast Pipeline (phonon-podcast)
+- JSON script → multi-speaker podcast generation
+- Concurrent TTS synthesis with configurable concurrency
+- Automatic SRT subtitle generation from STT
+- Chapter markers from silence detection or speaker switches
+- Multi-language segment support
+- LLM-powered script generation
 
-```bash
-pipx install pre-commit
-```
+### REST API (phonon-server)
+- `GET /health` — Health check
+- `POST /api/tts` — Text-to-speech synthesis
+- `POST /api/podcast/generate` — Full podcast generation
+- `POST /api/podcast/preview` — Single segment preview
 
-安装成功后运行 `pre-commit install` 即可。
+## Requirements
 
-### 安装 Cargo deny
+- Rust 1.85+ (2024 edition)
+- ffmpeg (optional, for phonon-video)
+- API keys (optional): `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`
 
-Cargo deny 是一个 Cargo 插件，可以用于检查依赖的安全性。
+## License
 
-```bash
-cargo install --locked cargo-deny
-```
-
-### 安装 typos
-
-typos 是一个拼写检查工具。
-
-```bash
-cargo install typos-cli
-```
-
-### 安装 git cliff
-
-git cliff 是一个生成 changelog 的工具。
-
-```bash
-cargo install git-cliff
-```
-
-此操作是在Github Actions中完成。
-在本项目模版中的Github Actions(`.github/workflows/build.yml`)配置触发Github Actions的分支是
-main分支，触发生成`CHANGELOG.md`是需要提交`tag`时触发，也就是提交tag版本时会触发，如果需要
-设置每次提交main分支触发，则删掉`if: startsWith(github.ref, 'refs/tags/')`
-
-### 安装 cargo nextest
-
-cargo nextest 是一个 Rust 增强测试工具。
-
-```bash
-cargo install cargo-nextest --locked
-```
+Dual-licensed under MIT or Apache-2.0.

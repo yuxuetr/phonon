@@ -1,0 +1,21 @@
+[package]
+name = "phonon-video"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Video audio track extraction and replacement for Phonon — wraps ffmpeg CLI"
+
+[dependencies]
+phonon-core.workspace = true
+phonon-io.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+tempfile.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

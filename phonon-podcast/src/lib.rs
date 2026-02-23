@@ -20,15 +20,19 @@
 //! # }
 //! ```
 
+pub mod chapters;
 pub mod config;
 pub mod pipeline;
 pub mod script;
 pub mod script_gen;
+pub mod subtitle;
 
+pub use chapters::{Chapter, chapters_from_silence, chapters_from_speakers, assign_chapter_times, format_chapters_text};
 pub use config::PipelineConfig;
 pub use pipeline::PodcastPipeline;
 pub use script::{PodcastScript, Segment};
 pub use script_gen::{ScriptGenerator, ScriptRequest, OpenAiScriptGenerator};
+pub use subtitle::{SubtitleEntry, generate_srt, write_srt_file, segments_to_srt_file};
 
 use thiserror::Error;
 

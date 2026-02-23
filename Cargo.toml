@@ -3,6 +3,8 @@ members = ["phonon-cli","phonon-core", "phonon-engine",
     "phonon-wav", "phonon-studio", "phonon-io",
     "phonon-ai",
     "phonon-podcast",
+    "phonon-video",
+    "phonon-server",
 ]
 resolver = "2"
 
@@ -21,6 +23,7 @@ phonon-io = { path = "phonon-io", version = "0.1.0" }
 phonon-engine = { path = "phonon-engine", version = "0.1.0" }
 phonon-ai = { path = "phonon-ai", version = "0.1.0" }
 phonon-podcast = { path = "phonon-podcast", version = "0.1.0" }
+phonon-video = { path = "phonon-video", version = "0.1.0" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -39,7 +42,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # HTTP
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
 bytes = "1"
 
 # Audio
@@ -61,6 +64,9 @@ clap = { version = "4.4", features = ["derive"] }
 dioxus = { version = "0.7", features = ["desktop"] }
 dioxus-logger = "0.7"
 rfd = "0.15"
+
+# Benchmarks
+criterion = { version = "0.5", features = ["html_reports"] }
 
 # Misc
 tempfile = "3"
