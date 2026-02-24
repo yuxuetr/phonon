@@ -15,12 +15,12 @@ pub enum FilterType {
 
 /// Biquad filter coefficients.
 #[derive(Debug, Clone)]
-struct Coefficients {
-    b0: f64,
-    b1: f64,
-    b2: f64,
-    a1: f64,
-    a2: f64,
+pub(crate) struct Coefficients {
+    pub(crate) b0: f64,
+    pub(crate) b1: f64,
+    pub(crate) b2: f64,
+    pub(crate) a1: f64,
+    pub(crate) a2: f64,
 }
 
 /// Applies a Biquad filter to the audio buffer.
@@ -90,7 +90,7 @@ pub fn filter(
     Ok(())
 }
 
-fn calculate_coefficients(
+pub(crate) fn calculate_coefficients(
     filter_type: FilterType,
     cutoff_hz: f64,
     sample_rate: f64,

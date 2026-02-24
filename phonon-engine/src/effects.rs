@@ -190,6 +190,57 @@ impl AudioEffect for CompressorEffect {
     }
 }
 
+/// Multi-band parametric EQ effect.
+///
+/// Wraps `phonon_core::ParametricEq` as a real-time `AudioEffect`.
+pub struct ParametricEqEffect {
+    bands: Vec<phonon_core::EqBand>,
+    eq: Option<phonon_core::ParametricEq>,
+    last_sample_rate: u32,
+    last_channels: u16,
+}
+
+impl ParametricEqEffect {
+    /// Creates a new parametric EQ effect with the given bands.
+    ///
+    /// The internal biquad state is lazily initialized on the first `process`
+    /// call (when sample rate / channels are known).
+    pub fn new(bands: Vec<phonon_core::EqBand>) -> Self {
+        Self {
+            bands,
+            eq: None,
+            last_sample_rate: 0,
+            last_channels: 0,
+        }
+    }
+}
+
+impl AudioEffect for ParametricEqEffect {
+    fn process(&mut self, samples: &mut [f32], sample_rate: u32, channels: u16) {
+        // Reinitialise when format changes or first call.
+        if self.eq.is_none()
+            || sample_rate != self.last_sample_rate
+            || channels != self.last_channels
+        {
+            self.eq = Some(phonon_core::ParametricEq::new(
+                self.bands.clone(),
+                sample_rate,
+                channels,
+            ));
+            self.last_sample_rate = sample_rate;
+            self.last_channels = channels;
+        }
+
+        if let Some(eq) = &mut self.eq {
+            eq.process(samples);
+        }
+    }
+
+    fn name(&self) -> &str {
+        "ParametricEQ"
+    }
+}
+
 /// High-pass filter effect (first-order).
 #[derive(Debug)]
 pub struct HighPassEffect {

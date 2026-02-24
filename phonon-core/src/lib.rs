@@ -19,6 +19,7 @@ pub use algorithms::repeat::repeat;
 pub use algorithms::loudness::{dbfs, rms, peak, peak_dbfs, adjust_volume_db, with_volume_db};
 pub use algorithms::compressor::{compress, with_compression, CompressorConfig};
 pub use algorithms::generators::{generate_signal, generate_tone, generate_beep, Waveform};
+pub use algorithms::eq::{apply_eq, with_eq, EqBand, ParametricEq};
 
 use thiserror::Error;
 

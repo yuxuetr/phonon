@@ -17,6 +17,7 @@ pub mod repeat;
 pub mod loudness;
 pub mod compressor;
 pub mod generators;
+pub mod eq;
 
 pub use trim::trim;
 pub use mix::mix;
@@ -37,3 +38,4 @@ pub use repeat::repeat;
 pub use loudness::{dbfs, rms, peak, peak_dbfs, adjust_volume_db, with_volume_db};
 pub use compressor::{compress, with_compression, CompressorConfig};
 pub use generators::{generate_signal, generate_tone, generate_beep, Waveform};
+pub use eq::{apply_eq, with_eq, EqBand, ParametricEq};

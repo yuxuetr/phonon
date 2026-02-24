@@ -1,8 +1,8 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use phonon_core::{
-    adjust_volume, compress, compute_spectrum, crossfade, fade_in, fade_out,
+    adjust_volume, apply_eq, compress, compute_spectrum, crossfade, fade_in, fade_out,
     generate_signal, mix, normalize, peak, resample, rms,
-    AudioBuffer, CompressorConfig, Waveform,
+    AudioBuffer, CompressorConfig, EqBand, Waveform,
 };
 
 /// Create a mono sine-wave buffer of given duration at 44100 Hz.
@@ -290,6 +290,53 @@ fn bench_loudness(c: &mut Criterion) {
     group.finish();
 }
 
+// ---------------------------------------------------------------------------
+// Parametric EQ
+// ---------------------------------------------------------------------------
+
+fn bench_eq(c: &mut Criterion) {
+    let mut group = c.benchmark_group("eq");
+
+    for &duration in &[1.0, 5.0, 10.0] {
+        let buf = make_sine(duration, 44100);
+
+        // Single-band peaking
+        group.bench_with_input(
+            BenchmarkId::new("1band_peak", format!("{duration}s")),
+            &buf,
+            |b, buf| {
+                let bands = vec![EqBand::new(
+                    phonon_core::FilterType::Peaking,
+                    1000.0,
+                    1.0,
+                    6.0,
+                )];
+                let mut clone = buf.clone();
+                b.iter(|| {
+                    clone.samples.copy_from_slice(&buf.samples);
+                    apply_eq(&mut clone, &bands);
+                });
+            },
+        );
+
+        // 5-band full EQ
+        group.bench_with_input(
+            BenchmarkId::new("5band", format!("{duration}s")),
+            &buf,
+            |b, buf| {
+                let bands = phonon_core::algorithms::eq::presets::voice();
+                let mut clone = buf.clone();
+                b.iter(|| {
+                    clone.samples.copy_from_slice(&buf.samples);
+                    apply_eq(&mut clone, &bands);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_resample,
@@ -302,5 +349,6 @@ criterion_group!(
     bench_fade,
     bench_volume,
     bench_loudness,
+    bench_eq,
 );
 criterion_main!(benches);
