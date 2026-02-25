@@ -6,6 +6,7 @@ members = ["phonon-cli","phonon-core", "phonon-engine",
     "phonon-video",
     "phonon-server",
     "phonon-tests",
+    "phonon-wasm",
 ]
 resolver = "2"
 
@@ -72,6 +73,9 @@ rfd = "0.15"
 
 # Benchmarks
 criterion = { version = "0.5", features = ["html_reports"] }
+
+# Wasm
+wasm-bindgen = "0.2"
 
 # Misc
 tempfile = "3"

@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phonon Audio Engine — Wasm Demo</title>
+<style>
+  :root {
+    --bg: #0f0f0f;
+    --surface: #1a1a2e;
+    --border: #333;
+    --accent: #6c5ce7;
+    --accent-light: #a29bfe;
+    --text: #e0e0e0;
+    --text-dim: #888;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 2rem;
+  }
+  h1 { font-size: 1.8rem; margin-bottom: 0.3rem; }
+  .subtitle { color: var(--text-dim); margin-bottom: 2rem; font-size: 0.9rem; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem;
+    width: 100%;
+    max-width: 720px;
+    margin-bottom: 1rem;
+  }
+  .card h2 { font-size: 1rem; margin-bottom: 1rem; color: var(--accent-light); }
+  #drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  #drop-zone.dragover {
+    border-color: var(--accent);
+    background: rgba(108,92,231,0.08);
+  }
+  #drop-zone input { display: none; }
+  #file-info { margin-top: 0.8rem; font-size: 0.85rem; color: var(--text-dim); }
+  canvas {
+    width: 100%;
+    height: 120px;
+    border-radius: 6px;
+    background: #111;
+    margin-top: 0.5rem;
+  }
+  .effects-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+  }
+  .effect-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.6rem 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .effect-btn:hover { border-color: var(--accent); background: rgba(108,92,231,0.12); }
+  .effect-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .controls { display: flex; gap: 0.5rem; margin-top: 0.8rem; }
+  .controls button {
+    background: var(--accent);
+    border: none;
+    color: #fff;
+    padding: 0.5rem 1.2rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .controls button:hover { background: var(--accent-light); }
+  .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .status { font-size: 0.8rem; color: var(--text-dim); margin-top: 0.5rem; }
+  .slider-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.3rem; }
+  .slider-row label { min-width: 80px; font-size: 0.85rem; }
+  .slider-row input[type="range"] { flex: 1; }
+  .slider-row .val { min-width: 50px; text-align: right; font-size: 0.8rem; color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<h1>🔊 Phonon Wasm Demo</h1>
+<p class="subtitle">Audio processing powered by Rust + WebAssembly</p>
+
+<!-- File loader -->
+<div class="card">
+  <h2>Load Audio</h2>
+  <div id="drop-zone">
+    <p>Drop an audio file here or click to browse</p>
+    <input type="file" id="file-input" accept="audio/*">
+  </div>
+  <div id="file-info"></div>
+</div>
+
+<!-- Waveform -->
+<div class="card">
+  <h2>Waveform</h2>
+  <canvas id="waveform"></canvas>
+</div>
+
+<!-- Spectrum -->
+<div class="card">
+  <h2>Spectrum</h2>
+  <canvas id="spectrum"></canvas>
+</div>
+
+<!-- Effects -->
+<div class="card">
+  <h2>Effects</h2>
+  <div class="slider-row">
+    <label>Volume</label>
+    <input type="range" id="volume-slider" min="0" max="200" value="100">
+    <span class="val" id="volume-val">100%</span>
+  </div>
+  <div class="slider-row">
+    <label>Fade (sec)</label>
+    <input type="range" id="fade-slider" min="0" max="5000" value="500">
+    <span class="val" id="fade-val">0.5s</span>
+  </div>
+  <div class="slider-row">
+    <label>Speed</label>
+    <input type="range" id="speed-slider" min="25" max="400" value="100">
+    <span class="val" id="speed-val">1.0x</span>
+  </div>
+
+  <div class="effects-grid" style="margin-top: 0.8rem;">
+    <button class="effect-btn" id="btn-normalize" disabled>Normalize</button>
+    <button class="effect-btn" id="btn-reverse" disabled>Reverse</button>
+    <button class="effect-btn" id="btn-fade-in" disabled>Fade In</button>
+    <button class="effect-btn" id="btn-fade-out" disabled>Fade Out</button>
+    <button class="effect-btn" id="btn-volume" disabled>Apply Volume</button>
+    <button class="effect-btn" id="btn-speed" disabled>Apply Speed</button>
+    <button class="effect-btn" id="btn-undo" disabled>Undo</button>
+  </div>
+  <p class="status" id="status">Load an audio file to begin.</p>
+</div>
+
+<!-- Playback -->
+<div class="card">
+  <h2>Playback</h2>
+  <div class="controls">
+    <button id="btn-play" disabled>▶ Play</button>
+    <button id="btn-stop" disabled>■ Stop</button>
+    <button id="btn-download" disabled>⬇ Download WAV</button>
+  </div>
+</div>
+
+<script type="module">
+import init, * as phonon from './pkg/phonon_wasm.js';
+
+let audioCtx = null;
+let sourceNode = null;
+let samples = null;       // Float32Array
+let prevSamples = null;   // for undo
+let sampleRate = 44100;
+let channels = 1;
+
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new AudioContext();
+  return audioCtx;
+}
+
+function setStatus(msg) {
+  document.getElementById('status').textContent = msg;
+}
+
+function enableButtons(on) {
+  for (const id of [
+    'btn-normalize','btn-reverse','btn-fade-in','btn-fade-out',
+    'btn-volume','btn-speed','btn-play','btn-stop','btn-download'
+  ]) {
+    document.getElementById(id).disabled = !on;
+  }
+  document.getElementById('btn-undo').disabled = !prevSamples;
+}
+
+// --- Waveform drawing ---
+function drawWaveform(data) {
+  const canvas = document.getElementById('waveform');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = canvas.clientWidth * dpr;
+  canvas.height = canvas.clientHeight * dpr;
+  ctx.scale(dpr, dpr);
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  ctx.clearRect(0, 0, w, h);
+
+  if (!data || data.length === 0) return;
+  const step = Math.max(1, Math.floor(data.length / w));
+  ctx.strokeStyle = '#6c5ce7';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = 0; x < w; x++) {
+    const idx = Math.min(x * step, data.length - 1);
+    const y = (1 - data[idx]) * h / 2;
+    x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+// --- Spectrum drawing ---
+function drawSpectrum(data) {
+  const canvas = document.getElementById('spectrum');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = canvas.clientWidth * dpr;
+  canvas.height = canvas.clientHeight * dpr;
+  ctx.scale(dpr, dpr);
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  ctx.clearRect(0, 0, w, h);
+
+  if (!data || data.length === 0) return;
+  const barW = w / data.length;
+  for (let i = 0; i < data.length; i++) {
+    const mag = Math.min(data[i], 1.0);
+    const barH = mag * h;
+    const hue = 260 - mag * 40;
+    ctx.fillStyle = `hsl(${hue}, 70%, ${50 + mag * 30}%)`;
+    ctx.fillRect(i * barW, h - barH, barW - 1, barH);
+  }
+}
+
+function refresh() {
+  if (!samples) return;
+  drawWaveform(samples);
+  const spec = phonon.compute_spectrum(samples, sampleRate, channels, 64);
+  drawSpectrum(spec);
+  const dur = phonon.duration_secs(samples.length, sampleRate, channels);
+  const pk = phonon.peak_dbfs(samples, sampleRate, channels);
+  document.getElementById('file-info').textContent =
+    `${dur.toFixed(2)}s | ${sampleRate} Hz | ${channels}ch | ${samples.length} samples | peak ${pk.toFixed(1)} dBFS`;
+}
+
+// --- File loading ---
+async function loadFile(file) {
+  setStatus('Decoding...');
+  const ctx = getAudioCtx();
+  const arrayBuf = await file.arrayBuffer();
+  const audioBuf = await ctx.decodeAudioData(arrayBuf);
+  sampleRate = audioBuf.sampleRate;
+  channels = audioBuf.numberOfChannels;
+
+  // Interleave channels
+  if (channels === 1) {
+    samples = audioBuf.getChannelData(0);
+  } else {
+    const ch0 = audioBuf.getChannelData(0);
+    const ch1 = audioBuf.getChannelData(1);
+    const interleaved = new Float32Array(ch0.length * 2);
+    for (let i = 0; i < ch0.length; i++) {
+      interleaved[i * 2] = ch0[i];
+      interleaved[i * 2 + 1] = ch1[i];
+    }
+    samples = interleaved;
+    channels = 2;
+  }
+  prevSamples = null;
+  enableButtons(true);
+  refresh();
+  setStatus(`Loaded: ${file.name}`);
+}
+
+// --- Drag & Drop ---
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+
+// --- Slider labels ---
+document.getElementById('volume-slider').addEventListener('input', e => {
+  document.getElementById('volume-val').textContent = e.target.value + '%';
+});
+document.getElementById('fade-slider').addEventListener('input', e => {
+  document.getElementById('fade-val').textContent = (e.target.value / 1000).toFixed(1) + 's';
+});
+document.getElementById('speed-slider').addEventListener('input', e => {
+  document.getElementById('speed-val').textContent = (e.target.value / 100).toFixed(2) + 'x';
+});
+
+function savePrev() { prevSamples = new Float32Array(samples); }
+
+// --- Effect buttons ---
+document.getElementById('btn-normalize').addEventListener('click', () => {
+  savePrev();
+  samples = new Float32Array(phonon.normalize(samples, sampleRate, channels));
+  refresh(); setStatus('Normalized.');
+  document.getElementById('btn-undo').disabled = false;
+});
+
+document.getElementById('btn-reverse').addEventListener('click', () => {
+  savePrev();
+  samples = new Float32Array(phonon.reverse(samples, sampleRate, channels));
+  refresh(); setStatus('Reversed.');
+  document.getElementById('btn-undo').disabled = false;
+});
+
+document.getElementById('btn-fade-in').addEventListener('click', () => {
+  savePrev();
+  const dur = document.getElementById('fade-slider').value / 1000;
+  samples = new Float32Array(phonon.fade_in(samples, sampleRate, channels, dur));
+  refresh(); setStatus(`Fade in ${dur.toFixed(1)}s applied.`);
+  document.getElementById('btn-undo').disabled = false;
+});
+
+document.getElementById('btn-fade-out').addEventListener('click', () => {
+  savePrev();
+  const dur = document.getElementById('fade-slider').value / 1000;
+  samples = new Float32Array(phonon.fade_out(samples, sampleRate, channels, dur));
+  refresh(); setStatus(`Fade out ${dur.toFixed(1)}s applied.`);
+  document.getElementById('btn-undo').disabled = false;
+});
+
+document.getElementById('btn-volume').addEventListener('click', () => {
+  savePrev();
+  const factor = document.getElementById('volume-slider').value / 100;
+  samples = new Float32Array(phonon.adjust_volume(samples, sampleRate, channels, factor));
+  refresh(); setStatus(`Volume ${(factor * 100).toFixed(0)}% applied.`);
+  document.getElementById('btn-undo').disabled = false;
+});
+
+document.getElementById('btn-speed').addEventListener('click', () => {
+  savePrev();
+  const factor = document.getElementById('speed-slider').value / 100;
+  try {
+    samples = new Float32Array(phonon.change_speed(samples, sampleRate, channels, factor));
+    refresh(); setStatus(`Speed ${factor.toFixed(2)}x applied.`);
+    document.getElementById('btn-undo').disabled = false;
+  } catch (e) {
+    setStatus('Speed change failed: ' + e.message);
+  }
+});
+
+document.getElementById('btn-undo').addEventListener('click', () => {
+  if (prevSamples) {
+    samples = prevSamples;
+    prevSamples = null;
+    refresh(); setStatus('Undo.');
+    document.getElementById('btn-undo').disabled = true;
+  }
+});
+
+// --- Playback ---
+document.getElementById('btn-play').addEventListener('click', () => {
+  if (sourceNode) { sourceNode.stop(); sourceNode = null; }
+  const ctx = getAudioCtx();
+  const buf = ctx.createBuffer(channels, samples.length / channels, sampleRate);
+  if (channels === 1) {
+    buf.copyToChannel(samples, 0);
+  } else {
+    const perCh = samples.length / 2;
+    const ch0 = new Float32Array(perCh);
+    const ch1 = new Float32Array(perCh);
+    for (let i = 0; i < perCh; i++) {
+      ch0[i] = samples[i * 2];
+      ch1[i] = samples[i * 2 + 1];
+    }
+    buf.copyToChannel(ch0, 0);
+    buf.copyToChannel(ch1, 1);
+  }
+  sourceNode = ctx.createBufferSource();
+  sourceNode.buffer = buf;
+  sourceNode.connect(ctx.destination);
+  sourceNode.start();
+  setStatus('Playing...');
+  sourceNode.onended = () => setStatus('Playback finished.');
+});
+
+document.getElementById('btn-stop').addEventListener('click', () => {
+  if (sourceNode) { sourceNode.stop(); sourceNode = null; setStatus('Stopped.'); }
+});
+
+// --- Download WAV ---
+document.getElementById('btn-download').addEventListener('click', () => {
+  if (!samples) return;
+  const numSamples = samples.length;
+  const bytesPerSample = 2;
+  const dataSize = numSamples * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  function writeStr(offset, str) {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  }
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * channels * bytesPerSample, true);
+  view.setUint16(32, channels * bytesPerSample, true);
+  view.setUint16(34, 16, true); // 16-bit
+  writeStr(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let i = 0; i < numSamples; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s * 0x7FFF, true);
+    offset += 2;
+  }
+
+  const blob = new Blob([buffer], { type: 'audio/wav' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'phonon_output.wav'; a.click();
+  URL.revokeObjectURL(url);
+  setStatus('Downloaded WAV.');
+});
+
+// --- Init wasm ---
+async function main() {
+  setStatus('Loading wasm...');
+  await init();
+  setStatus('Ready. Load an audio file to begin.');
+}
+main();
+</script>
+</body>
+</html>

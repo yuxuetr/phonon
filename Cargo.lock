@@ -4222,6 +4222,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "phonon-wasm"
+version = "0.1.0"
+dependencies = [
+ "phonon-core",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "phonon-wav"
 version = "0.1.0"
 dependencies = [
