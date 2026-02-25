@@ -67,125 +67,56 @@ pub type Result<T> = std::result::Result<T, PhononError>;
 
 ```
 phonon/
-├── Cargo.toml              # Workspace 根配置
+├── Cargo.toml              # Workspace 根配置 (12 crates)
 ├── DESIGN.md               # 架构设计文档
 ├── AGENTS.md               # 本文档
 ├── README.md               # 项目说明
+├── Todos.md                # 开发计划跟踪
 │
-├── phonon-wav/             # Phase 1: WAV 文件处理
-│   ├── Cargo.toml
+├── phonon-core/            # 音频算法核心 (AudioBuffer, DSP, EQ, Plugin)
 │   └── src/
-│       ├── lib.rs          # 公开 API
-│       ├── reader.rs       # WAV 读取
-│       ├── writer.rs       # WAV 写入
-│       └── types.rs        # 核心数据结构
+│       ├── lib.rs          # 公开 API + AudioBuffer
+│       ├── plugin.rs       # DspPlugin trait + PluginRegistry + 5 内建插件
+│       └── algorithms/     # 20+ 算法模块 (mix, trim, eq, compressor, fft, ...)
 │
-├── phonon-core/            # Phase 2: 音频算法核心
-│   ├── Cargo.toml
+├── phonon-wav/             # WAV 文件读写
+├── phonon-io/              # 多格式 I/O (WAV/MP3/FLAC/OGG/AAC)
+├── phonon-engine/          # 实时播放引擎 (AudioEffect + EffectChain)
+├── phonon-ai/              # AI 集成 (TTS/STT/SoundGen)
+├── phonon-podcast/         # 播客生成管线 (脚本→TTS→拼装+字幕+章节)
+├── phonon-video/           # 视频音轨提取/替换 (ffmpeg)
+├── phonon-server/          # REST API 服务 (axum)
+├── phonon-wasm/            # WebAssembly 绑定 (wasm-bindgen + demo)
+├── phonon-studio/          # 桌面 GUI (Dioxus 0.7)
 │   └── src/
-│       ├── lib.rs
-│       ├── buffer.rs       # AudioBuffer 定义
-│       ├── algorithms/     # 算法模块
-│       │   ├── mod.rs
-│       │   ├── trim.rs     # 剪辑
-│       │   ├── merge.rs    # 拼接
-│       │   ├── mix.rs      # 混音
-│       │   └── normalize.rs # 归一化
-│       └── utils.rs        # 工具函数
-│
-├── phonon-engine/          # Phase 3: 播放引擎
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs
-│       ├── player.rs       # 播放器核心
-│       ├── device.rs       # 设备管理
-│       └── stream.rs       # 音频流
-│
-├── phonon-ai/              # Phase 5: AI 集成
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs
-│       ├── tts.rs          # 文本转语音
-│       ├── stt.rs          # 语音识别
-│       └── models.rs       # 模型加载
-│
-├── phonon-video/           # Phase 6: 视频音频处理
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs
-│       ├── extract.rs      # 音轨提取
-│       └── mux.rs          # 音频封装
-│
-└── phonon-studio/          # Phase 4: GUI 应用
-    ├── Cargo.toml
-    ├── tauri.conf.json
-    ├── src/
-    │   └── main.rs
-    └── ui/                 # 前端代码
-        ├── index.html
-        ├── main.js
-        └── style.css
+│       ├── main.rs
+│       ├── state.rs        # 全局状态 (AppState)
+│       └── components/     # UI 组件 (waveform, spectrum, eq, export, ...)
+├── phonon-cli/             # 命令行工具
+└── phonon-tests/           # 集成测试
 ```
 
 ## 当前开发阶段
 
-### Phase 1: Phonon v0.1 - WAV 读写 (进行中)
+**已完成**: v0.1 (WAV) → v0.2 (pydub等价) → v0.3 (播客Agent) → v0.4 (STT/字幕/视频/Server) → v0.5 (sinc resampler/多格式/EffectChain/CI) → v0.6 (EQ/rayon/Studio UI/Wasm/Plugin)
 
-**当前 crate**: `phonon-wav`
+**当前版本**: v0.6+
 
-**核心任务**:
-1. ✅ 创建 Workspace 结构
-2. ⏳ 实现 `AudioBuffer` 数据结构
-3. ⏳ WAV 文件读取功能
-4. ⏳ WAV 文件写入功能
-5. ⏳ CLI 工具验证
-6. ⏳ 单元测试覆盖
+**phonon-core 特性**:
+- `features = ["parallel"]` (默认开启, rayon 并行处理)
+- 20+ 算法模块 + DspPlugin 插件架构
+- 151 单元测试 + 8 doc tests
 
-**关键数据结构**:
-```rust
-/// 核心音频缓冲区
-pub struct AudioBuffer {
-    /// 音频采样数据，范围 [-1.0, 1.0]
-    pub samples: Vec<f32>,
-    
-    /// 采样率 (Hz)
-    pub sample_rate: u32,
-    
-    /// 声道数 (1=单声道, 2=立体声)
-    pub channels: u16,
-}
+**phonon-wasm**:
+- `phonon-core` 的 wasm-bindgen 封装 (无 rayon)
+- process_audio() + 独立函数 + demo HTML
 
-impl AudioBuffer {
-    /// 从 WAV 文件读取
-    pub fn from_wav_file<P: AsRef<Path>>(path: P) -> Result<Self>;
-    
-    /// 从字节流读取 WAV
-    pub fn from_wav_bytes(data: &[u8]) -> Result<Self>;
-    
-    /// 保存为 WAV 文件
-    pub fn to_wav_file<P: AsRef<Path>>(&self, path: P) -> Result<()>;
-    
-    /// 转换为 WAV 字节流
-    pub fn to_wav_bytes(&self) -> Result<Vec<u8>>;
-    
-    /// 获取时长（秒）
-    pub fn duration_secs(&self) -> f64;
-}
-```
-
-**WAV 格式关键点**:
-- RIFF 文件格式：`RIFF` + ChunkSize + `WAVE`
-- fmt 子块：包含采样率、声道数、位深度等信息
-- data 子块：实际音频数据（PCM 编码）
-- 支持 16-bit PCM (主要) 和 32-bit float PCM
-- 注意大小端序处理（WAV 使用小端序）
-
-**依赖**:
-```toml
-[dependencies]
-hound = "3.5"        # WAV 格式处理
-thiserror = "1.0"    # 错误定义
-```
+**下一步待做**:
+- AudioEffect / DspPlugin 架构统一
+- wasm-pack 构建验证
+- Studio 插件浏览器
+- 流式 TTS
+- 发布到 crates.io
 
 ## 开发工作流
 

@@ -16,7 +16,8 @@ Phonon is organized as a Rust workspace with the following crates:
 | `phonon-podcast` | Podcast generation pipeline — script → TTS → assembly with chapters & subtitles |
 | `phonon-video` | Video audio track extraction/replacement via ffmpeg |
 | `phonon-server` | REST API server (axum) exposing TTS and podcast generation |
-| `phonon-studio` | Desktop GUI application (Dioxus + Tauri) |
+| `phonon-wasm` | WebAssembly bindings — run phonon-core in the browser via wasm-bindgen |
+| `phonon-studio` | Desktop GUI application (Dioxus 0.7) with spectrum visualization, EQ panel, drag & drop |
 | `phonon-cli` | Command-line interface |
 
 ## Quick Start
@@ -42,9 +43,13 @@ cargo run -p phonon-server
 - Resample (Lanczos sinc interpolation), channel conversion
 - Normalize, volume adjustment, fade in/out
 - Dynamic range compressor (voice/gentle/limiter presets)
+- Multi-band parametric EQ (8 filter types, presets for voice/bass/bright)
+- Biquad filters (low-pass, high-pass, band-pass, notch, peaking, shelving)
 - FFT spectrum analysis
 - Signal generators (sine, square, sawtooth, white noise)
 - Loudness measurement (RMS, peak, dBFS)
+- Plugin architecture (DspPlugin trait, PluginRegistry, 5 built-in plugins)
+- Parallel processing via rayon (auto-threshold, optional via `parallel` feature)
 
 ### AI Integration (phonon-ai)
 - **TTS**: OpenAI, Microsoft Edge TTS, ElevenLabs
@@ -65,6 +70,13 @@ cargo run -p phonon-server
 - `POST /api/tts` — Text-to-speech synthesis
 - `POST /api/podcast/generate` — Full podcast generation
 - `POST /api/podcast/preview` — Single segment preview
+
+### WebAssembly (phonon-wasm)
+- All phonon-core algorithms available in the browser
+- `process_audio()` — chain operations via JSON config
+- Individual functions: normalize, reverse, fade, volume, speed, spectrum, EQ
+- Demo page with drag & drop, waveform/spectrum visualization, Web Audio playback
+- Build: `wasm-pack build -p phonon-wasm --target web`
 
 ## Requirements
 
