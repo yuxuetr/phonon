@@ -2,3 +2,4 @@
 .DS_Store
 node_modules/
 phonon-studio/tailwind.css
+phonon-wasm/www/pkg/
