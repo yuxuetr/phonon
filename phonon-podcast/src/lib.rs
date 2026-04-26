@@ -31,8 +31,8 @@ pub use chapters::{
   Chapter, assign_chapter_times, chapters_from_silence, chapters_from_speakers,
   format_chapters_text,
 };
-pub use config::PipelineConfig;
-pub use pipeline::PodcastPipeline;
+pub use config::{AssetSource, PipelineConfig};
+pub use pipeline::{NoSoundGen, PodcastPipeline};
 pub use script::{PodcastScript, Segment};
 pub use script_gen::{OpenAiScriptGenerator, ScriptGenerator, ScriptRequest};
 pub use subtitle::{SubtitleEntry, generate_srt, segments_to_srt_file, write_srt_file};

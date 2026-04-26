@@ -1,25 +1,69 @@
 use crate::PodcastError;
-use crate::config::PipelineConfig;
+use crate::config::{AssetSource, PipelineConfig};
 use crate::script::PodcastScript;
-use phonon_ai::TtsProvider;
+use phonon_ai::{AiError, SoundGenProvider, SoundPrompt, TtsProvider};
 use phonon_core::{self, AudioBuffer};
+use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::{info, instrument};
 
+/// Sentinel "no sound generator" type — the default `S` parameter for
+/// [`PodcastPipeline`]. Calling [`SoundGenProvider::generate`] on this
+/// returns an error so configs that ask for `AssetSource::Generated`
+/// fail loudly rather than silently dropping the asset.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoSoundGen;
+
+impl SoundGenProvider for NoSoundGen {
+  fn generate(
+    &self,
+    _prompt: &SoundPrompt,
+  ) -> impl Future<Output = Result<AudioBuffer, AiError>> + Send {
+    async {
+      Err(AiError::Config(
+        "AssetSource::Generated requires a SoundGenProvider — call \
+         PodcastPipeline::with_sound_gen() first"
+          .to_string(),
+      ))
+    }
+  }
+}
+
 /// The podcast generation pipeline.
 ///
 /// Orchestrates TTS synthesis, audio processing, and assembly
 /// to produce a complete podcast episode from a script.
-pub struct PodcastPipeline<T: TtsProvider> {
+///
+/// The optional second type parameter `S` is a [`SoundGenProvider`].
+/// By default it's [`NoSoundGen`] — set it via
+/// [`PodcastPipeline::with_sound_gen`] when the script uses
+/// `AssetSource::Generated` for BGM, intro, or outro.
+pub struct PodcastPipeline<T: TtsProvider, S: SoundGenProvider = NoSoundGen> {
   tts: T,
+  sound_gen: S,
 }
 
-impl<T: TtsProvider> PodcastPipeline<T> {
-  /// Creates a new pipeline with the given TTS provider.
+impl<T: TtsProvider> PodcastPipeline<T, NoSoundGen> {
+  /// Creates a new pipeline with the given TTS provider and no
+  /// sound generator. Use [`Self::with_sound_gen`] to upgrade.
   pub fn new(tts: T) -> Self {
-    Self { tts }
+    Self {
+      tts,
+      sound_gen: NoSoundGen,
+    }
+  }
+}
+
+impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
+  /// Returns a new pipeline with the supplied sound generator,
+  /// preserving the existing TTS provider.
+  pub fn with_sound_gen<S2: SoundGenProvider>(self, sound_gen: S2) -> PodcastPipeline<T, S2> {
+    PodcastPipeline {
+      tts: self.tts,
+      sound_gen,
+    }
   }
 
   /// Generates a complete podcast episode as an `AudioBuffer`.
@@ -122,10 +166,14 @@ impl<T: TtsProvider> PodcastPipeline<T> {
     let mut assembled = self.assemble_segments(segment_buffers, config)?;
 
     // Step 4: Add intro/outro
-    assembled = self.add_intro_outro(assembled, config, target_rate, target_channels)?;
+    assembled = self
+      .add_intro_outro(assembled, config, target_rate, target_channels)
+      .await?;
 
     // Step 5: Mix with BGM
-    assembled = self.mix_bgm(assembled, config, target_rate, target_channels)?;
+    assembled = self
+      .mix_bgm(assembled, config, target_rate, target_channels)
+      .await?;
 
     // Step 6: Final normalize + fade
     phonon_core::normalize(&mut assembled, config.normalize_target);
@@ -262,16 +310,13 @@ impl<T: TtsProvider> PodcastPipeline<T> {
     Ok(result)
   }
 
-  /// Load an audio file, resampling/channel-converting to target format.
-  fn load_and_convert(
+  /// Resample + channel-convert an already-loaded buffer to the target.
+  fn convert_to_target(
     &self,
-    path: &str,
+    mut buf: AudioBuffer,
     target_rate: u32,
     target_channels: u16,
   ) -> Result<AudioBuffer, PodcastError> {
-    let mut buf = phonon_io::read_audio(path)
-      .map_err(|e| PodcastError::Io(format!("Failed to load '{}': {}", path, e)))?;
-
     if buf.sample_rate != target_rate {
       buf = phonon_core::resample(&buf, target_rate)
         .map_err(|e| PodcastError::Processing(e.to_string()))?;
@@ -280,26 +325,49 @@ impl<T: TtsProvider> PodcastPipeline<T> {
       buf = phonon_core::ensure_channels(&buf, target_channels)
         .map_err(|e| PodcastError::Processing(e.to_string()))?;
     }
-
     Ok(buf)
   }
 
+  /// Resolve an [`AssetSource`] into a buffer in the target format,
+  /// loading from disk or invoking the configured sound generator.
+  async fn resolve_asset(
+    &self,
+    source: &AssetSource,
+    target_rate: u32,
+    target_channels: u16,
+  ) -> Result<AudioBuffer, PodcastError> {
+    let raw = match source {
+      AssetSource::File { path } => phonon_io::read_audio(path)
+        .map_err(|e| PodcastError::Io(format!("Failed to load '{}': {}", path, e)))?,
+      AssetSource::Generated { prompt } => self
+        .sound_gen
+        .generate(prompt)
+        .await
+        .map_err(|e| PodcastError::Processing(format!("Sound generation failed: {}", e)))?,
+    };
+    self.convert_to_target(raw, target_rate, target_channels)
+  }
+
   /// Add intro/outro audio to the assembled track.
-  fn add_intro_outro(
+  async fn add_intro_outro(
     &self,
     mut main: AudioBuffer,
     config: &PipelineConfig,
     target_rate: u32,
     target_channels: u16,
   ) -> Result<AudioBuffer, PodcastError> {
-    if let Some(ref intro_path) = config.intro_audio {
-      let intro = self.load_and_convert(intro_path, target_rate, target_channels)?;
+    if let Some(intro_source) = config.effective_intro() {
+      let intro = self
+        .resolve_asset(&intro_source, target_rate, target_channels)
+        .await?;
       main = phonon_core::merge(&[intro, main])
         .map_err(|e| PodcastError::Processing(format!("Merge intro: {}", e)))?;
     }
 
-    if let Some(ref outro_path) = config.outro_audio {
-      let outro = self.load_and_convert(outro_path, target_rate, target_channels)?;
+    if let Some(outro_source) = config.effective_outro() {
+      let outro = self
+        .resolve_asset(&outro_source, target_rate, target_channels)
+        .await?;
       main = phonon_core::merge(&[main, outro])
         .map_err(|e| PodcastError::Processing(format!("Merge outro: {}", e)))?;
     }
@@ -307,19 +375,21 @@ impl<T: TtsProvider> PodcastPipeline<T> {
     Ok(main)
   }
 
-  /// Mix background music with the main track.
-  fn mix_bgm(
+  /// Mix background music with the main track. Loops or trims to length.
+  async fn mix_bgm(
     &self,
     main: AudioBuffer,
     config: &PipelineConfig,
     target_rate: u32,
     target_channels: u16,
   ) -> Result<AudioBuffer, PodcastError> {
-    let Some(ref bgm_path) = config.bgm_audio else {
+    let Some(bgm_source) = config.effective_bgm() else {
       return Ok(main);
     };
 
-    let mut bgm = self.load_and_convert(bgm_path, target_rate, target_channels)?;
+    let mut bgm = self
+      .resolve_asset(&bgm_source, target_rate, target_channels)
+      .await?;
 
     // Lower BGM volume
     phonon_core::adjust_volume(&mut bgm, config.bgm_volume);
@@ -345,6 +415,39 @@ impl<T: TtsProvider> PodcastPipeline<T> {
 mod tests {
   use super::*;
   use phonon_ai::{AiError, VoiceConfig};
+  use std::sync::atomic::{AtomicUsize, Ordering};
+  use std::sync::Arc;
+
+  /// Mock SoundGenProvider that records prompt count and returns a quiet
+  /// 1 s sine at 44.1 kHz mono — long enough to be looped/trimmed by the
+  /// pipeline against a typical few-segment script output.
+  struct MockSoundGen {
+    calls: Arc<AtomicUsize>,
+  }
+
+  impl SoundGenProvider for MockSoundGen {
+    fn generate(
+      &self,
+      _prompt: &SoundPrompt,
+    ) -> impl Future<Output = Result<AudioBuffer, AiError>> + Send {
+      let calls = self.calls.clone();
+      async move {
+        calls.fetch_add(1, Ordering::SeqCst);
+        let sr = 44100_u32;
+        let samples: Vec<f32> = (0..sr as usize)
+          .map(|i| {
+            let t = i as f64 / sr as f64;
+            (t * 220.0 * 2.0 * std::f64::consts::PI).sin() as f32 * 0.3
+          })
+          .collect();
+        Ok(AudioBuffer {
+          samples,
+          sample_rate: sr,
+          channels: 1,
+        })
+      }
+    }
+  }
 
   /// A mock TTS provider that generates a sine wave for any text.
   /// The duration scales with text length to simulate real TTS.
@@ -457,6 +560,83 @@ mod tests {
 
     // Out of range should error
     assert!(pipeline.preview_segment(&script, 5).await.is_err());
+  }
+
+  #[tokio::test]
+  async fn test_pipeline_generated_bgm_invokes_sound_gen() {
+    let json = r#"{
+      "title": "Generated BGM",
+      "speakers": { "host": { "voice_id": "alloy" } },
+      "segments": [
+        { "speaker": "host", "text": "Welcome to the show" },
+        { "speaker": "host", "text": "And here is more content" }
+      ],
+      "config": {
+        "bgm_volume": 0.1,
+        "bgm": {
+          "kind": "generated",
+          "prompt": { "prompt": "ambient pad" }
+        }
+      }
+    }"#;
+
+    let script = PodcastScript::from_json(json).unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let pipeline = PodcastPipeline::new(MockTts).with_sound_gen(MockSoundGen {
+      calls: calls.clone(),
+    });
+
+    let result = pipeline.generate(&script).await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "BGM gen should be invoked once");
+    assert!(!result.samples.is_empty());
+  }
+
+  #[tokio::test]
+  async fn test_pipeline_generated_intro_without_sound_gen_errors() {
+    let json = r#"{
+      "title": "No Generator",
+      "speakers": { "host": { "voice_id": "alloy" } },
+      "segments": [
+        { "speaker": "host", "text": "Hello" }
+      ],
+      "config": {
+        "intro": {
+          "kind": "generated",
+          "prompt": { "prompt": "jingle" }
+        }
+      }
+    }"#;
+    let script = PodcastScript::from_json(json).unwrap();
+    let pipeline = PodcastPipeline::new(MockTts);
+    let err = pipeline.generate(&script).await.expect_err("should error");
+    let s = err.to_string();
+    assert!(
+      s.contains("SoundGenProvider") || s.contains("sound generator"),
+      "unexpected error: {}",
+      s
+    );
+  }
+
+  #[tokio::test]
+  async fn test_pipeline_legacy_bgm_audio_still_works() {
+    // bgm_audio (legacy path) still loads without a sound generator.
+    // Use a non-existent path to verify we *try* to load the file
+    // (and thus emit an Io error, not a "no sound gen" error).
+    let json = r#"{
+      "title": "Legacy",
+      "speakers": { "host": { "voice_id": "alloy" } },
+      "segments": [
+        { "speaker": "host", "text": "Hello" }
+      ],
+      "config": {
+        "bgm_audio": "/nonexistent/path/bgm.wav"
+      }
+    }"#;
+    let script = PodcastScript::from_json(json).unwrap();
+    let pipeline = PodcastPipeline::new(MockTts);
+    let err = pipeline.generate(&script).await.expect_err("should error");
+    let s = err.to_string();
+    assert!(s.contains("Failed to load"), "unexpected error: {}", s);
   }
 
   #[tokio::test]

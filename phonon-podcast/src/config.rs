@@ -1,4 +1,21 @@
+use phonon_ai::SoundPrompt;
 use serde::{Deserialize, Serialize};
+
+/// Source of an audio asset (BGM, intro, outro).
+///
+/// `File` loads the asset from a path on disk; `Generated` produces it
+/// at runtime via a [`phonon_ai::SoundGenProvider`]. The pipeline silently
+/// falls back to `bgm_audio` / `intro_audio` / `outro_audio` legacy fields
+/// when the corresponding new field is `None`, so old configs continue to
+/// work unchanged.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AssetSource {
+  /// Load from a file path on disk.
+  File { path: String },
+  /// Generate at runtime via the configured `SoundGenProvider`.
+  Generated { prompt: SoundPrompt },
+}
 
 /// Configuration for the podcast generation pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +68,18 @@ pub struct PipelineConfig {
   /// Set to 1 for sequential processing. Default: 4.
   #[serde(default = "default_tts_concurrency")]
   pub tts_concurrency: usize,
+
+  /// Background music source. When `Some`, takes precedence over `bgm_audio`.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub bgm: Option<AssetSource>,
+
+  /// Intro audio source. When `Some`, takes precedence over `intro_audio`.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub intro: Option<AssetSource>,
+
+  /// Outro audio source. When `Some`, takes precedence over `outro_audio`.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub outro: Option<AssetSource>,
 }
 
 fn default_pause() -> f64 {
@@ -96,7 +125,42 @@ impl Default for PipelineConfig {
       fade_in_secs: default_fade_in(),
       fade_out_secs: default_fade_out(),
       tts_concurrency: default_tts_concurrency(),
+      bgm: None,
+      intro: None,
+      outro: None,
     }
+  }
+}
+
+impl PipelineConfig {
+  /// Effective BGM source: prefers `bgm`, falls back to legacy `bgm_audio` path.
+  pub fn effective_bgm(&self) -> Option<AssetSource> {
+    self.bgm.clone().or_else(|| {
+      self
+        .bgm_audio
+        .as_ref()
+        .map(|p| AssetSource::File { path: p.clone() })
+    })
+  }
+
+  /// Effective intro source.
+  pub fn effective_intro(&self) -> Option<AssetSource> {
+    self.intro.clone().or_else(|| {
+      self
+        .intro_audio
+        .as_ref()
+        .map(|p| AssetSource::File { path: p.clone() })
+    })
+  }
+
+  /// Effective outro source.
+  pub fn effective_outro(&self) -> Option<AssetSource> {
+    self.outro.clone().or_else(|| {
+      self
+        .outro_audio
+        .as_ref()
+        .map(|p| AssetSource::File { path: p.clone() })
+    })
   }
 }
 
