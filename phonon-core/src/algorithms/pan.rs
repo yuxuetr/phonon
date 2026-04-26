@@ -108,7 +108,12 @@ mod tests {
     for &p in &[-1.0, -0.7, -0.3, 0.0, 0.2, 0.5, 0.9, 1.0_f32] {
       let (l, r) = constant_power_gains(p);
       let total = l * l + r * r;
-      assert!((total - 1.0).abs() < 1e-5, "total power at p={}: {}", p, total);
+      assert!(
+        (total - 1.0).abs() < 1e-5,
+        "total power at p={}: {}",
+        p,
+        total
+      );
     }
   }
 

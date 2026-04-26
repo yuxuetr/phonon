@@ -253,7 +253,11 @@ fn gated_mean_loudness(blocks: &[f64], rel_offset_lu: f64) -> f64 {
   }
 
   // Absolute gate: discard blocks below -70 LUFS.
-  let above_abs: Vec<f64> = blocks.iter().copied().filter(|&l| l >= ABS_GATE_LUFS).collect();
+  let above_abs: Vec<f64> = blocks
+    .iter()
+    .copied()
+    .filter(|&l| l >= ABS_GATE_LUFS)
+    .collect();
   if above_abs.is_empty() {
     return f64::NEG_INFINITY;
   }
@@ -317,7 +321,11 @@ pub fn loudness_range(buffer: &AudioBuffer) -> f32 {
   }
 
   // Absolute gate.
-  let above_abs: Vec<f64> = blocks.iter().copied().filter(|&l| l >= ABS_GATE_LUFS).collect();
+  let above_abs: Vec<f64> = blocks
+    .iter()
+    .copied()
+    .filter(|&l| l >= ABS_GATE_LUFS)
+    .collect();
   if above_abs.len() < 2 {
     return 0.0;
   }
@@ -382,7 +390,11 @@ fn tp_kernels() -> [[f64; TP_TAPS_PER_PHASE]; TP_PHASES] {
       let n = (tap * TP_PHASES + phase) as f64;
       let x = n - center;
       let arg = PI * x / TP_PHASES as f64;
-      let sinc = if x.abs() < 1e-12 { 1.0 } else { arg.sin() / arg };
+      let sinc = if x.abs() < 1e-12 {
+        1.0
+      } else {
+        arg.sin() / arg
+      };
       // Hamming window over [0, total-1].
       let win = 0.54 - 0.46 * (2.0 * PI * n / (total as f64 - 1.0)).cos();
       out[phase][tap] = sinc * win;
@@ -552,18 +564,46 @@ mod tests {
     let rlb = Biquad::k_rlb_filter(48000.0);
 
     // Reference values published in BS.1770-4 Annex 1 (within fp tolerance).
-    assert!((pre.b0 - 1.53512485958697).abs() < 1e-6, "pre.b0 = {}", pre.b0);
-    assert!((pre.b1 + 2.69169618940638).abs() < 1e-6, "pre.b1 = {}", pre.b1);
-    assert!((pre.b2 - 1.19839281085285).abs() < 1e-6, "pre.b2 = {}", pre.b2);
-    assert!((pre.a1 + 1.69065929318241).abs() < 1e-6, "pre.a1 = {}", pre.a1);
-    assert!((pre.a2 - 0.73248077421585).abs() < 1e-6, "pre.a2 = {}", pre.a2);
+    assert!(
+      (pre.b0 - 1.53512485958697).abs() < 1e-6,
+      "pre.b0 = {}",
+      pre.b0
+    );
+    assert!(
+      (pre.b1 + 2.69169618940638).abs() < 1e-6,
+      "pre.b1 = {}",
+      pre.b1
+    );
+    assert!(
+      (pre.b2 - 1.19839281085285).abs() < 1e-6,
+      "pre.b2 = {}",
+      pre.b2
+    );
+    assert!(
+      (pre.a1 + 1.69065929318241).abs() < 1e-6,
+      "pre.a1 = {}",
+      pre.a1
+    );
+    assert!(
+      (pre.a2 - 0.73248077421585).abs() < 1e-6,
+      "pre.a2 = {}",
+      pre.a2
+    );
 
     // RLB numerator is the fixed [1, -2, 1] form per spec.
     assert_eq!(rlb.b0, 1.0);
     assert_eq!(rlb.b1, -2.0);
     assert_eq!(rlb.b2, 1.0);
-    assert!((rlb.a1 + 1.99004745483398).abs() < 1e-6, "rlb.a1 = {}", rlb.a1);
-    assert!((rlb.a2 - 0.99007225036621).abs() < 1e-6, "rlb.a2 = {}", rlb.a2);
+    assert!(
+      (rlb.a1 + 1.99004745483398).abs() < 1e-6,
+      "rlb.a1 = {}",
+      rlb.a1
+    );
+    assert!(
+      (rlb.a2 - 0.99007225036621).abs() < 1e-6,
+      "rlb.a2 = {}",
+      rlb.a2
+    );
   }
 
   #[test]
@@ -574,7 +614,11 @@ mod tests {
       channels: 1,
     };
     let lufs = loudness_integrated(&buf);
-    assert!(lufs.is_infinite() && lufs < 0.0, "expected -inf, got {}", lufs);
+    assert!(
+      lufs.is_infinite() && lufs < 0.0,
+      "expected -inf, got {}",
+      lufs
+    );
   }
 
   #[test]
@@ -585,7 +629,11 @@ mod tests {
       channels: 1,
     };
     let lufs = loudness_integrated(&buf);
-    assert!(lufs.is_infinite(), "expected -inf for too-short buffer, got {}", lufs);
+    assert!(
+      lufs.is_infinite(),
+      "expected -inf for too-short buffer, got {}",
+      lufs
+    );
   }
 
   // 1 kHz sine at -20 dBFS should measure ~ -23 LUFS (pyloudnorm ref ≈ -22.97 LUFS).

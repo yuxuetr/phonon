@@ -355,13 +355,11 @@ mod tests {
 
   #[test]
   fn test_write_srt_writes_file() -> Result<(), PodcastError> {
-    let ep = Episode::new(dummy_audio(44100, 0.1)).with_srt(
-      "1\n00:00:00,000 --> 00:00:01,000\nHello\n".to_string(),
-    );
+    let ep = Episode::new(dummy_audio(44100, 0.1))
+      .with_srt("1\n00:00:00,000 --> 00:00:01,000\nHello\n".to_string());
     let tmp = std::env::temp_dir().join("phonon_episode.srt");
     ep.write_srt(&tmp)?;
-    let contents =
-      std::fs::read_to_string(&tmp).map_err(|e| PodcastError::Io(e.to_string()))?;
+    let contents = std::fs::read_to_string(&tmp).map_err(|e| PodcastError::Io(e.to_string()))?;
     assert!(contents.contains("Hello"));
     let _ = std::fs::remove_file(&tmp);
     Ok(())

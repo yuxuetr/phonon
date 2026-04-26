@@ -315,4 +315,163 @@ mod tests {
 
     let _ = std::fs::remove_file(&tmp);
   }
+
+  // -----------------------------------------------------------------------
+  // v0.7 end-to-end: script → episode → tagged MP3 with chapters + LUFS
+  // -----------------------------------------------------------------------
+
+  /// Mock TtsProvider for the integration test — returns a sine tone whose
+  /// duration is proportional to text length so chapters land at distinct
+  /// timestamps.
+  struct IntegMockTts;
+  impl phonon_ai::TtsProvider for IntegMockTts {
+    async fn synthesize(
+      &self,
+      text: &str,
+      _voice: &phonon_ai::VoiceConfig,
+    ) -> Result<AudioBuffer, phonon_ai::AiError> {
+      let sr = 24_000_u32;
+      let dur = 0.3 + (text.len() as f64) * 0.02;
+      let n = (dur * sr as f64) as usize;
+      let samples: Vec<f32> = (0..n)
+        .map(|i| {
+          let t = i as f64 / sr as f64;
+          (t * 440.0 * 2.0 * std::f64::consts::PI).sin() as f32 * 0.5
+        })
+        .collect();
+      Ok(AudioBuffer {
+        samples,
+        sample_rate: sr,
+        channels: 1,
+      })
+    }
+  }
+
+  #[tokio::test]
+  async fn test_v0_7_full_pipeline_to_tagged_mp3() {
+    use id3::{Tag, TagLike};
+    use phonon_io::{Mp3Config, PodcastTags};
+    use phonon_podcast::{PodcastPipeline, PodcastScript};
+
+    let json = r#"{
+      "title": "Phonon v0.7 Integration",
+      "speakers": {
+        "alice": { "voice_id": "alloy" },
+        "bob":   { "voice_id": "echo" }
+      },
+      "segments": [
+        { "speaker": "alice", "text": "Welcome to the integration test podcast." },
+        { "speaker": "bob",   "text": "Today we exercise the v0.7 path: pipeline, LUFS, tags, chapters." },
+        { "speaker": "alice", "text": "Let's verify the export end-to-end." }
+      ]
+    }"#;
+
+    let script = PodcastScript::from_json(json).unwrap();
+    let pipeline = PodcastPipeline::new(IntegMockTts);
+    let mut episode = pipeline.generate_episode(&script).await.unwrap();
+
+    // Sanity: 3 distinct-speaker segments → 3 chapters.
+    assert_eq!(episode.chapters.len(), 3);
+    assert_eq!(episode.chapters[0].title, "alice");
+    assert_eq!(episode.chapters[1].title, "bob");
+    assert_eq!(episode.chapters[2].title, "alice");
+
+    // SRT generated.
+    let srt = episode.srt.as_deref().unwrap_or("");
+    assert!(srt.contains("Welcome to the integration test podcast."));
+
+    // LUFS-normalize before export, mimicking the publishing flow.
+    phonon_core::normalize_lufs(&mut episode.audio, -16.0, -1.0);
+
+    episode = episode.with_tags(PodcastTags {
+      title: Some("Phonon v0.7 Integration".into()),
+      artist: Some("phonon-tests".into()),
+      album: Some("Season 1".into()),
+      year: Some(2026),
+      genre: Some("Podcast".into()),
+      language: Some("eng".into()),
+      track: Some(1),
+      ..Default::default()
+    });
+
+    let tmp = std::env::temp_dir().join("phonon_v0_7_integ.mp3");
+    episode.export_mp3(&tmp, &Mp3Config::default()).unwrap();
+
+    // Verify the produced file: tags round-trip and chapter frames are present.
+    let read_tag = Tag::read_from_path(&tmp).expect("read tag");
+    assert_eq!(read_tag.title(), Some("Phonon v0.7 Integration"));
+    assert_eq!(read_tag.artist(), Some("phonon-tests"));
+    assert_eq!(read_tag.year(), Some(2026));
+    let chap_count = read_tag.frames().filter(|f| f.id() == "CHAP").count();
+    assert_eq!(chap_count, 3, "expected 3 CHAP frames in output");
+    let toc_count = read_tag.frames().filter(|f| f.id() == "CTOC").count();
+    assert_eq!(toc_count, 1, "expected exactly one CTOC frame");
+
+    let _ = std::fs::remove_file(&tmp);
+  }
+
+  // -----------------------------------------------------------------------
+  // MCP end-to-end: load → normalize_lufs → save through the tool registry
+  // -----------------------------------------------------------------------
+
+  #[tokio::test]
+  async fn test_mcp_load_lufs_save_roundtrip() {
+    use phonon_mcp::ToolRegistry;
+    use serde_json::json;
+
+    // Set up a known WAV on disk to load through MCP.
+    let src = sine_wave(44100, 5.0, 440.0);
+    let in_path = std::env::temp_dir().join("phonon_mcp_in.wav");
+    let out_path = std::env::temp_dir().join("phonon_mcp_out.wav");
+    phonon_wav::write_wav(&in_path, &src).unwrap();
+
+    let tools = ToolRegistry::new();
+
+    // 1. audio_load
+    let loaded = tools
+      .call("audio_load", json!({ "path": in_path.to_string_lossy() }))
+      .await
+      .unwrap();
+    let h_in: phonon_mcp::AudioHandle = serde_json::from_value(loaded["handle"].clone()).unwrap();
+
+    // 2. audio_loudness — should give a finite measurement on this 5 s sine.
+    let report = tools
+      .call("audio_loudness", json!({ "handle": h_in }))
+      .await
+      .unwrap();
+    assert!(report["integrated_lufs"].is_number(), "got {:?}", report);
+
+    // 3. audio_normalize_lufs to -16 LUFS / -1 dBTP
+    let normalized = tools
+      .call(
+        "audio_normalize_lufs",
+        json!({ "handle": h_in, "target_lufs": -16.0, "true_peak_max_dbtp": -1.0 }),
+      )
+      .await
+      .unwrap();
+    let h_out: phonon_mcp::AudioHandle =
+      serde_json::from_value(normalized["handle"].clone()).unwrap();
+
+    // 4. audio_save
+    let _ = tools
+      .call(
+        "audio_save",
+        json!({ "handle": h_out, "path": out_path.to_string_lossy() }),
+      )
+      .await
+      .unwrap();
+
+    // Verify the output file exists, is non-empty, and re-measures near the target.
+    let saved = phonon_io::read_audio(&out_path).unwrap();
+    let lufs_after = phonon_core::loudness_integrated(&saved);
+    assert!(lufs_after.is_finite());
+    assert!(
+      (lufs_after - (-16.0)).abs() < 1.5,
+      "expected ≈ -16 LUFS after normalization, got {}",
+      lufs_after
+    );
+
+    let _ = std::fs::remove_file(&in_path);
+    let _ = std::fs::remove_file(&out_path);
+  }
 }

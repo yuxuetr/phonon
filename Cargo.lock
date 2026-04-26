@@ -4306,12 +4306,15 @@ dependencies = [
 name = "phonon-tests"
 version = "0.1.0"
 dependencies = [
+ "id3",
  "phonon-ai",
  "phonon-core",
  "phonon-io",
+ "phonon-mcp",
  "phonon-podcast",
  "phonon-wav",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

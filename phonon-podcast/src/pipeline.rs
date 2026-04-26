@@ -199,10 +199,7 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
   /// reconstructed from per-segment durations. The returned episode has
   /// empty `tags`; populate them via [`Episode::with_tags`] before export.
   #[instrument(skip(self, script), fields(title = %script.title))]
-  pub async fn generate_episode(
-    &self,
-    script: &PodcastScript,
-  ) -> Result<Episode, PodcastError> {
+  pub async fn generate_episode(&self, script: &PodcastScript) -> Result<Episode, PodcastError> {
     let config = &script.config;
     let target_rate = config.output_sample_rate;
     let target_channels = config.output_channels;
@@ -251,8 +248,11 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
       phonon_core::fade_out(&mut assembled, config.fade_out_secs);
     }
 
-    let (chapters, srt) =
-      build_episode_metadata(script, &segment_durations, config.pause_between_segments_secs);
+    let (chapters, srt) = build_episode_metadata(
+      script,
+      &segment_durations,
+      config.pause_between_segments_secs,
+    );
     let episode = Episode::new(assembled)
       .with_chapters(chapters)
       .with_srt(srt);
@@ -482,8 +482,8 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
 mod tests {
   use super::*;
   use phonon_ai::{AiError, VoiceConfig};
-  use std::sync::atomic::{AtomicUsize, Ordering};
   use std::sync::Arc;
+  use std::sync::atomic::{AtomicUsize, Ordering};
 
   /// Mock SoundGenProvider that records prompt count and returns a quiet
   /// 1 s sine at 44.1 kHz mono — long enough to be looped/trimmed by the
@@ -654,7 +654,11 @@ mod tests {
     });
 
     let result = pipeline.generate(&script).await.unwrap();
-    assert_eq!(calls.load(Ordering::SeqCst), 1, "BGM gen should be invoked once");
+    assert_eq!(
+      calls.load(Ordering::SeqCst),
+      1,
+      "BGM gen should be invoked once"
+    );
     assert!(!result.samples.is_empty());
   }
 
@@ -724,7 +728,11 @@ mod tests {
     let episode = pipeline.generate_episode(&script).await.unwrap();
 
     assert!(!episode.audio.samples.is_empty());
-    assert_eq!(episode.chapters.len(), 2, "two distinct speakers → two chapters");
+    assert_eq!(
+      episode.chapters.len(),
+      2,
+      "two distinct speakers → two chapters"
+    );
     assert_eq!(episode.chapters[0].title, "alice");
     assert_eq!(episode.chapters[1].title, "bob");
     let srt = episode.srt.as_deref().unwrap_or("");

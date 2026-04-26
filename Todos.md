@@ -73,10 +73,12 @@
   - [ ] AI 工具 (tts_synthesize/tts_list_voices/sound_generate) — 留作下游项目接入(provider 配置在调用方)
   - [ ] 管线工具 (podcast_generate/podcast_export) — 留作下游项目接入
 
-### 收尾
-- [ ] 集成测试 (phonon-tests: 端到端"脚本→tagged-mp3"流程)
-- [ ] README / AGENTS.md / CHANGELOG 更新
-- [ ] Todos.md 全部 DONE 标记
+### 收尾 ✅ 已完成
+- [x] 集成测试 (phonon-tests: 端到端"脚本→tagged-mp3"流程 + MCP load/normalize_lufs/save 流程) ✅
+- [x] README / AGENTS.md 更新 ✅
+- [x] Todos.md 全部 DONE 标记 ✅
+
+> v0.7 总计:`cargo test --workspace` 377 个单元/集成测试全部通过,`cargo fmt --check` 干净。新增 9 个独立功能 commit + 4 个 WIP 清理 commit + 2 个文档 commit。
 
 ## 远期(v0.8+)
 

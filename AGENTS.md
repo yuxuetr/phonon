@@ -98,25 +98,30 @@ phonon/
 
 ## 当前开发阶段
 
-**已完成**: v0.1 (WAV) → v0.2 (pydub等价) → v0.3 (播客Agent) → v0.4 (STT/字幕/视频/Server) → v0.5 (sinc resampler/多格式/EffectChain/CI) → v0.6 (EQ/rayon/Studio UI/Wasm/Plugin)
+**已完成**: v0.1 (WAV) → v0.2 (pydub等价) → v0.3 (播客Agent) → v0.4 (STT/字幕/视频/Server) → v0.5 (sinc resampler/多格式/EffectChain/CI) → v0.6 (EQ/rayon/Studio UI/Wasm/Plugin) → **v0.7 (LUFS/MP3+FLAC+OGG tags/Pan/TTS cache/AI BGM 接管线/Episode export/MCP server)**
 
-**当前版本**: v0.6+
+**当前版本**: v0.7
 
 **phonon-core 特性**:
-- `features = ["parallel"]` (默认开启, rayon 并行处理)
-- 20+ 算法模块 + DspPlugin 插件架构
-- 151 单元测试 + 8 doc tests
+- `features = ["parallel", "simd"]`(默认开启)— rayon 并行 + NEON/SSE SIMD
+- 22+ 算法模块,新增 `lufs`(BS.1770-4)和 `pan`
+- 191 单元测试 + 8 doc tests + 12 集成测试
 
 **phonon-wasm**:
-- `phonon-core` 的 wasm-bindgen 封装 (无 rayon)
+- `phonon-core` 的 wasm-bindgen 封装(无 rayon / 无 simd)
 - process_audio() + 独立函数 + demo HTML
 
-**下一步待做**:
+**phonon-mcp**(v0.7 新增):
+- JSON-RPC 2.0 over stdio,基于 hand-rolled 实现(避免 rmcp 复杂性)
+- 14 个内建 tool:基础 / DSP / 测量类
+- AssetRegistry 用 UUID 句柄管理音频缓冲,LLM 永不接触 PCM 字节
+
+**下一步待做**(详见 RoadMap.md):
+- 流式 TTS(边合成边播)
 - AudioEffect / DspPlugin 架构统一
 - wasm-pack 构建验证
-- Studio 插件浏览器
-- 流式 TTS
 - 发布到 crates.io
+- AI / 管线工具下沉到下游 data-source 项目(provider 配置在调用方)
 
 ## 开发工作流
 

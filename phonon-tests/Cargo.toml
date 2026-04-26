@@ -11,4 +11,7 @@ phonon-wav.workspace = true
 phonon-io.workspace = true
 phonon-ai.workspace = true
 phonon-podcast.workspace = true
+phonon-mcp.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
+id3 = { workspace = true }

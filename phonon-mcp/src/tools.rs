@@ -25,9 +25,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 /// Boxed async handler signature.
-pub type ToolHandler = Arc<
-  dyn Fn(Value) -> Pin<Box<dyn Future<Output = Result<Value, McpError>> + Send>> + Send + Sync,
->;
+pub type ToolHandler =
+  Arc<dyn Fn(Value) -> Pin<Box<dyn Future<Output = Result<Value, McpError>> + Send>> + Send + Sync>;
 
 /// Schema + description metadata for an MCP tool.
 #[derive(Clone)]
@@ -459,8 +458,10 @@ fn register_audio_normalize(r: &mut ToolRegistry) {
   let handler: ToolHandler = Arc::new(move |args| {
     let registry = registry.clone();
     Box::pin(async move {
-      let NormalizeArgs { handle, target_peak } =
-        serde_json::from_value(args).map_err(|e| McpError::InvalidArgs(e.to_string()))?;
+      let NormalizeArgs {
+        handle,
+        target_peak,
+      } = serde_json::from_value(args).map_err(|e| McpError::InvalidArgs(e.to_string()))?;
       let buf = registry.get(&handle)?;
       let mut owned: AudioBuffer = (*buf).clone();
       phonon_core::normalize(&mut owned, target_peak);
@@ -502,10 +503,9 @@ fn register_audio_normalize_lufs(r: &mut ToolRegistry) {
   });
   r.register(Tool {
     name: "audio_normalize_lufs".into(),
-    description:
-      "Loudness-normalize to a target LUFS-I value with a true-peak ceiling (dBTP). \
+    description: "Loudness-normalize to a target LUFS-I value with a true-peak ceiling (dBTP). \
        Use -16 LUFS / -1 dBTP for podcast publishing."
-        .into(),
+      .into(),
     input_schema: json!({
       "type": "object",
       "properties": {
@@ -535,8 +535,7 @@ fn register_audio_volume_db(r: &mut ToolRegistry) {
   });
   r.register(Tool {
     name: "audio_volume_db".into(),
-    description: "Apply a gain in decibels (positive = louder, negative = quieter)."
-      .into(),
+    description: "Apply a gain in decibels (positive = louder, negative = quieter).".into(),
     input_schema: json!({
       "type": "object",
       "properties": {
@@ -594,8 +593,10 @@ fn register_audio_resample(r: &mut ToolRegistry) {
   let handler: ToolHandler = Arc::new(move |args| {
     let registry = registry.clone();
     Box::pin(async move {
-      let ResampleArgs { handle, target_rate } =
-        serde_json::from_value(args).map_err(|e| McpError::InvalidArgs(e.to_string()))?;
+      let ResampleArgs {
+        handle,
+        target_rate,
+      } = serde_json::from_value(args).map_err(|e| McpError::InvalidArgs(e.to_string()))?;
       let buf = registry.get(&handle)?;
       let resampled = phonon_core::resample(&buf, target_rate).map_err(McpError::from)?;
       let new_handle = registry.insert(resampled.clone());
@@ -655,11 +656,7 @@ fn register_audio_loudness(r: &mut ToolRegistry) {
 }
 
 fn finite_or_null(v: f32) -> Value {
-  if v.is_finite() {
-    json!(v)
-  } else {
-    Value::Null
-  }
+  if v.is_finite() { json!(v) } else { Value::Null }
 }
 
 #[cfg(test)]
@@ -697,7 +694,10 @@ mod tests {
     let r = ToolRegistry::new();
     let h = r.registry.insert(dummy());
     let out = r
-      .call("audio_normalize", json!({ "handle": h, "target_peak": 0.9 }))
+      .call(
+        "audio_normalize",
+        json!({ "handle": h, "target_peak": 0.9 }),
+      )
       .await
       .unwrap();
     let new_h: AudioHandle = serde_json::from_value(out["handle"].clone()).unwrap();
@@ -752,10 +752,7 @@ mod tests {
     let r = ToolRegistry::new();
     let list = r.list_json();
     let arr = list.as_array().unwrap();
-    let names: Vec<&str> = arr
-      .iter()
-      .filter_map(|v| v["name"].as_str())
-      .collect();
+    let names: Vec<&str> = arr.iter().filter_map(|v| v["name"].as_str()).collect();
     for expected in [
       "audio_load",
       "audio_save",

@@ -103,10 +103,7 @@ pub fn attach_tag(
       element_ids.push(element_id.clone());
 
       let mut sub_frames = Vec::new();
-      sub_frames.push(Frame::with_content(
-        "TIT2",
-        Content::Text(ch.title.clone()),
-      ));
+      sub_frames.push(Frame::with_content("TIT2", Content::Text(ch.title.clone())));
 
       let chap = Id3Chapter {
         element_id,
@@ -184,8 +181,8 @@ mod tests {
     write_mp3_tagged(&tmp, &buf, &Mp3Config::default(), &tags, &[])?;
 
     // Read back the tag.
-    let read_tag = Tag::read_from_path(&tmp)
-      .map_err(|e| PhononError::Wav(format!("Read tag failed: {}", e)))?;
+    let read_tag =
+      Tag::read_from_path(&tmp).map_err(|e| PhononError::Wav(format!("Read tag failed: {}", e)))?;
     assert_eq!(read_tag.title(), Some("Episode 1: Hello"));
     assert_eq!(read_tag.artist(), Some("My Podcast"));
     assert_eq!(read_tag.album(), Some("Season 1"));
@@ -215,8 +212,8 @@ mod tests {
     let tmp = std::env::temp_dir().join("phonon_tagged_cover.mp3");
     write_mp3_tagged(&tmp, &buf, &Mp3Config::default(), &tags, &[])?;
 
-    let read_tag = Tag::read_from_path(&tmp)
-      .map_err(|e| PhononError::Wav(format!("Read tag failed: {}", e)))?;
+    let read_tag =
+      Tag::read_from_path(&tmp).map_err(|e| PhononError::Wav(format!("Read tag failed: {}", e)))?;
     let pictures: Vec<_> = read_tag.pictures().collect();
     assert_eq!(pictures.len(), 1);
     assert_eq!(pictures[0].mime_type, "image/jpeg");
@@ -242,14 +239,11 @@ mod tests {
     let tmp = std::env::temp_dir().join("phonon_tagged_chapters.mp3");
     write_mp3_tagged(&tmp, &buf, &Mp3Config::default(), &tags, &chapters)?;
 
-    let read_tag = Tag::read_from_path(&tmp)
-      .map_err(|e| PhononError::Wav(format!("Read tag failed: {}", e)))?;
+    let read_tag =
+      Tag::read_from_path(&tmp).map_err(|e| PhononError::Wav(format!("Read tag failed: {}", e)))?;
 
     // Count CHAP frames.
-    let chap_frames: Vec<_> = read_tag
-      .frames()
-      .filter(|f| f.id() == "CHAP")
-      .collect();
+    let chap_frames: Vec<_> = read_tag.frames().filter(|f| f.id() == "CHAP").collect();
     assert_eq!(chap_frames.len(), 3, "expected 3 CHAP frames");
 
     // Verify CTOC exists and references all 3 chapters.
@@ -291,8 +285,8 @@ mod tests {
     };
     attach_tag(&tmp, &second, &[])?;
 
-    let read_tag = Tag::read_from_path(&tmp)
-      .map_err(|e| PhononError::Wav(format!("Read tag failed: {}", e)))?;
+    let read_tag =
+      Tag::read_from_path(&tmp).map_err(|e| PhononError::Wav(format!("Read tag failed: {}", e)))?;
     assert_eq!(read_tag.title(), Some("Second"));
 
     let _ = std::fs::remove_file(&tmp);

@@ -116,8 +116,8 @@ mod tests {
     let tmp = std::env::temp_dir().join("phonon_flac_basic.flac");
     write_flac_tagged(&tmp, &buf, &FlacConfig::default(), &tags)?;
 
-    let read = Tag::read_from_path(&tmp)
-      .map_err(|e| PhononError::Wav(format!("Read tag failed: {}", e)))?;
+    let read =
+      Tag::read_from_path(&tmp).map_err(|e| PhononError::Wav(format!("Read tag failed: {}", e)))?;
     let comments = read.vorbis_comments().expect("vorbis comments present");
     assert_eq!(comments.title().map(|v| v[0].as_str()), Some("Episode A"));
     assert_eq!(comments.artist().map(|v| v[0].as_str()), Some("Show"));
@@ -157,8 +157,8 @@ mod tests {
     let tmp = std::env::temp_dir().join("phonon_flac_cover.flac");
     write_flac_tagged(&tmp, &buf, &FlacConfig::default(), &tags)?;
 
-    let read = Tag::read_from_path(&tmp)
-      .map_err(|e| PhononError::Wav(format!("Read tag failed: {}", e)))?;
+    let read =
+      Tag::read_from_path(&tmp).map_err(|e| PhononError::Wav(format!("Read tag failed: {}", e)))?;
     let pictures: Vec<_> = read.pictures().collect();
     assert_eq!(pictures.len(), 1);
     assert_eq!(pictures[0].mime_type, "image/png");
@@ -185,8 +185,8 @@ mod tests {
     };
     attach_flac_tag(&tmp, &second)?;
 
-    let read = Tag::read_from_path(&tmp)
-      .map_err(|e| PhononError::Wav(format!("Read tag failed: {}", e)))?;
+    let read =
+      Tag::read_from_path(&tmp).map_err(|e| PhononError::Wav(format!("Read tag failed: {}", e)))?;
     let comments = read.vorbis_comments().expect("vorbis comments present");
     assert_eq!(comments.title().map(|v| v[0].as_str()), Some("Second"));
 

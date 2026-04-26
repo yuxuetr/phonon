@@ -10,9 +10,9 @@
 //! files. WAV is used so cached audio is lossless and can be loaded by
 //! any reader.
 
+use crate::AiError;
 use crate::tts::TtsProvider;
 use crate::voice::VoiceConfig;
-use crate::AiError;
 use phonon_core::AudioBuffer;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -147,8 +147,8 @@ impl<T: TtsProvider> TtsProvider for CachingTts<T> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use std::sync::atomic::{AtomicUsize, Ordering};
   use std::sync::Arc;
+  use std::sync::atomic::{AtomicUsize, Ordering};
   use tempfile::TempDir;
 
   /// In-memory TTS provider that records how many times it was called.
@@ -202,12 +202,21 @@ mod tests {
     let voice = VoiceConfig::new("alloy");
     let buf1 = cache.synthesize("Hello world", &voice).await.unwrap();
     let buf2 = cache.synthesize("Hello world", &voice).await.unwrap();
-    assert_eq!(calls.load(Ordering::SeqCst), 1, "second call must hit cache");
+    assert_eq!(
+      calls.load(Ordering::SeqCst),
+      1,
+      "second call must hit cache"
+    );
     assert_eq!(buf1.sample_rate, buf2.sample_rate);
     assert_eq!(buf1.samples.len(), buf2.samples.len());
     // WAV roundtrip is 16-bit PCM, so a tiny quantization delta is expected.
     for (a, b) in buf1.samples.iter().zip(buf2.samples.iter()) {
-      assert!((a - b).abs() < 1e-3, "cache roundtrip drift: {} vs {}", a, b);
+      assert!(
+        (a - b).abs() < 1e-3,
+        "cache roundtrip drift: {} vs {}",
+        a,
+        b
+      );
     }
   }
 
