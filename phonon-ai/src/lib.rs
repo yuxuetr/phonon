@@ -34,9 +34,9 @@ pub mod voice;
 pub use client::HttpClient;
 pub use edge_tts::EdgeTts;
 pub use elevenlabs::ElevenLabsTts;
-pub use sound_gen::{HttpSoundGen, SoundGenProvider, SoundPrompt};
+pub use sound_gen::{HttpSoundGen, ReplicateSoundGen, SoundGenProvider, SoundPreset, SoundPrompt};
 pub use stt::{SttProvider, TranscribeOptions, TranscriptResult, TranscriptSegment, WhisperStt};
-pub use tts::{OpenAiTts, TtsProvider};
+pub use tts::{OpenAiTts, TtsProvider, pcm_i16le_to_f32};
 pub use voice::VoiceConfig;
 
 use thiserror::Error;
@@ -44,25 +44,25 @@ use thiserror::Error;
 /// Errors that can occur in phonon-ai operations.
 #[derive(Error, Debug)]
 pub enum AiError {
-    /// HTTP request or network error.
-    #[error("HTTP error: {0}")]
-    Http(String),
+  /// HTTP request or network error.
+  #[error("HTTP error: {0}")]
+  Http(String),
 
-    /// API returned an error response.
-    #[error("API error (status {status}): {message}")]
-    Api { status: u16, message: String },
+  /// API returned an error response.
+  #[error("API error (status {status}): {message}")]
+  Api { status: u16, message: String },
 
-    /// Configuration error (e.g. missing API key).
-    #[error("Configuration error: {0}")]
-    Config(String),
+  /// Configuration error (e.g. missing API key).
+  #[error("Configuration error: {0}")]
+  Config(String),
 
-    /// Audio decoding error.
-    #[error("Audio decode error: {0}")]
-    Decode(String),
+  /// Audio decoding error.
+  #[error("Audio decode error: {0}")]
+  Decode(String),
 
-    /// I/O error.
-    #[error("IO error: {0}")]
-    Io(String),
+  /// I/O error.
+  #[error("IO error: {0}")]
+  Io(String),
 }
 
 /// Result type for phonon-ai operations.

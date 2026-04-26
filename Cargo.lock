@@ -4072,6 +4072,7 @@ name = "phonon-ai"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "futures",
  "msedge-tts",
  "phonon-core",
  "phonon-io",

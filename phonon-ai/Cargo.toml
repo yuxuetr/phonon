@@ -19,3 +19,4 @@ tracing.workspace = true
 bytes.workspace = true
 tempfile.workspace = true
 msedge-tts.workspace = true
+futures.workspace = true
