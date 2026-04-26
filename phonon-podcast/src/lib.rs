@@ -27,31 +27,34 @@ pub mod script;
 pub mod script_gen;
 pub mod subtitle;
 
-pub use chapters::{Chapter, chapters_from_silence, chapters_from_speakers, assign_chapter_times, format_chapters_text};
+pub use chapters::{
+  Chapter, assign_chapter_times, chapters_from_silence, chapters_from_speakers,
+  format_chapters_text,
+};
 pub use config::PipelineConfig;
 pub use pipeline::PodcastPipeline;
 pub use script::{PodcastScript, Segment};
-pub use script_gen::{ScriptGenerator, ScriptRequest, OpenAiScriptGenerator};
-pub use subtitle::{SubtitleEntry, generate_srt, write_srt_file, segments_to_srt_file};
+pub use script_gen::{OpenAiScriptGenerator, ScriptGenerator, ScriptRequest};
+pub use subtitle::{SubtitleEntry, generate_srt, segments_to_srt_file, write_srt_file};
 
 use thiserror::Error;
 
 /// Errors that can occur during podcast generation.
 #[derive(Error, Debug)]
 pub enum PodcastError {
-    /// Script parsing or validation error.
-    #[error("Script error: {0}")]
-    Script(String),
+  /// Script parsing or validation error.
+  #[error("Script error: {0}")]
+  Script(String),
 
-    /// TTS synthesis error.
-    #[error("TTS error: {0}")]
-    Tts(String),
+  /// TTS synthesis error.
+  #[error("TTS error: {0}")]
+  Tts(String),
 
-    /// Audio processing error.
-    #[error("Processing error: {0}")]
-    Processing(String),
+  /// Audio processing error.
+  #[error("Processing error: {0}")]
+  Processing(String),
 
-    /// I/O error (file read/write).
-    #[error("IO error: {0}")]
-    Io(String),
+  /// I/O error (file read/write).
+  #[error("IO error: {0}")]
+  Io(String),
 }
