@@ -29,13 +29,21 @@ pub fn adjust_volume(buffer: &mut AudioBuffer, gain: f32) {
       .par_iter_mut()
       .for_each(|s| *s = (*s * gain).clamp(-1.0, 1.0));
   } else {
+    #[cfg(feature = "simd")]
+    super::simd_ops::simd_mul_clamp(&mut buffer.samples, gain);
+    #[cfg(not(feature = "simd"))]
     for sample in &mut buffer.samples {
       *sample = (*sample * gain).clamp(-1.0, 1.0);
     }
   }
   #[cfg(not(feature = "parallel"))]
-  for sample in &mut buffer.samples {
-    *sample = (*sample * gain).clamp(-1.0, 1.0);
+  {
+    #[cfg(feature = "simd")]
+    super::simd_ops::simd_mul_clamp(&mut buffer.samples, gain);
+    #[cfg(not(feature = "simd"))]
+    for sample in &mut buffer.samples {
+      *sample = (*sample * gain).clamp(-1.0, 1.0);
+    }
   }
 }
 

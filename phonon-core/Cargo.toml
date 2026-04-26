@@ -7,8 +7,9 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["parallel"]
+default = ["parallel", "simd"]
 parallel = ["rayon"]
+simd = []
 
 [dependencies]
 num-complex.workspace = true

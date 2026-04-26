@@ -33,13 +33,21 @@ pub fn fade_in(buffer: &mut AudioBuffer, duration_secs: f64) {
       .enumerate()
       .for_each(|(i, s)| *s *= i as f32 * inv_fade);
   } else {
+    #[cfg(feature = "simd")]
+    super::simd_ops::simd_mul_ramp(&mut buffer.samples[..fade_len], 0.0, inv_fade);
+    #[cfg(not(feature = "simd"))]
     for i in 0..fade_len {
       buffer.samples[i] *= i as f32 * inv_fade;
     }
   }
   #[cfg(not(feature = "parallel"))]
-  for i in 0..fade_len {
-    buffer.samples[i] *= i as f32 * inv_fade;
+  {
+    #[cfg(feature = "simd")]
+    super::simd_ops::simd_mul_ramp(&mut buffer.samples[..fade_len], 0.0, inv_fade);
+    #[cfg(not(feature = "simd"))]
+    for i in 0..fade_len {
+      buffer.samples[i] *= i as f32 * inv_fade;
+    }
   }
 }
 
@@ -73,15 +81,23 @@ pub fn fade_out(buffer: &mut AudioBuffer, duration_secs: f64) {
       .enumerate()
       .for_each(|(i, s)| *s *= 1.0 - i as f32 * inv_fade);
   } else {
+    #[cfg(feature = "simd")]
+    super::simd_ops::simd_mul_ramp(&mut buffer.samples[start_idx..], 1.0, -inv_fade);
+    #[cfg(not(feature = "simd"))]
     for i in 0..fade_len {
       let gain = 1.0 - (i as f32 * inv_fade);
       buffer.samples[start_idx + i] *= gain;
     }
   }
   #[cfg(not(feature = "parallel"))]
-  for i in 0..fade_len {
-    let gain = 1.0 - (i as f32 * inv_fade);
-    buffer.samples[start_idx + i] *= gain;
+  {
+    #[cfg(feature = "simd")]
+    super::simd_ops::simd_mul_ramp(&mut buffer.samples[start_idx..], 1.0, -inv_fade);
+    #[cfg(not(feature = "simd"))]
+    for i in 0..fade_len {
+      let gain = 1.0 - (i as f32 * inv_fade);
+      buffer.samples[start_idx + i] *= gain;
+    }
   }
 }
 

@@ -64,23 +64,11 @@ pub fn mix(buffer1: &AudioBuffer, buffer2: &AudioBuffer) -> Result<AudioBuffer> 
         })
         .collect()
     } else {
-      let mut out = Vec::with_capacity(max_len);
-      for i in 0..max_len {
-        let s1 = if i < len1 { buffer1.samples[i] } else { 0.0 };
-        let s2 = if i < len2 { buffer2.samples[i] } else { 0.0 };
-        out.push((s1 + s2).clamp(-1.0, 1.0));
-      }
-      out
+      mix_scalar(buffer1, buffer2, len1, len2, max_len)
     }
     #[cfg(not(feature = "parallel"))]
     {
-      let mut out = Vec::with_capacity(max_len);
-      for i in 0..max_len {
-        let s1 = if i < len1 { buffer1.samples[i] } else { 0.0 };
-        let s2 = if i < len2 { buffer2.samples[i] } else { 0.0 };
-        out.push((s1 + s2).clamp(-1.0, 1.0));
-      }
-      out
+      mix_scalar(buffer1, buffer2, len1, len2, max_len)
     }
   };
 
@@ -89,6 +77,43 @@ pub fn mix(buffer1: &AudioBuffer, buffer2: &AudioBuffer) -> Result<AudioBuffer> 
     sample_rate: buffer1.sample_rate,
     channels: buffer1.channels,
   })
+}
+
+/// Scalar (+ optional SIMD) mix of two buffers.
+fn mix_scalar(
+  buffer1: &AudioBuffer,
+  buffer2: &AudioBuffer,
+  len1: usize,
+  len2: usize,
+  max_len: usize,
+) -> Vec<f32> {
+  let min_len = len1.min(len2);
+  let mut out = vec![0.0f32; max_len];
+
+  // Overlapping region: both buffers have data — use SIMD if available.
+  #[cfg(feature = "simd")]
+  {
+    super::simd_ops::simd_add_clamp(
+      &buffer1.samples[..min_len],
+      &buffer2.samples[..min_len],
+      &mut out[..min_len],
+    );
+  }
+  #[cfg(not(feature = "simd"))]
+  {
+    for i in 0..min_len {
+      out[i] = (buffer1.samples[i] + buffer2.samples[i]).clamp(-1.0, 1.0);
+    }
+  }
+
+  // Tail from the longer buffer.
+  if len1 > min_len {
+    out[min_len..max_len].copy_from_slice(&buffer1.samples[min_len..len1]);
+  } else if len2 > min_len {
+    out[min_len..max_len].copy_from_slice(&buffer2.samples[min_len..len2]);
+  }
+
+  out
 }
 
 #[cfg(test)]

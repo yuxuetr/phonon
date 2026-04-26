@@ -52,11 +52,18 @@ pub fn normalize(buffer: &mut AudioBuffer, target_peak: f32) {
       unreachable!()
     }
   } else {
-    buffer
-      .samples
-      .iter()
-      .map(|s| s.abs())
-      .fold(0.0f32, f32::max)
+    #[cfg(feature = "simd")]
+    {
+      super::simd_ops::simd_max_abs(&buffer.samples)
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+      buffer
+        .samples
+        .iter()
+        .map(|s| s.abs())
+        .fold(0.0f32, f32::max)
+    }
   };
 
   // Avoid division by zero and unnecessary processing
@@ -66,6 +73,9 @@ pub fn normalize(buffer: &mut AudioBuffer, target_peak: f32) {
       #[cfg(feature = "parallel")]
       buffer.samples.par_iter_mut().for_each(|s| *s *= gain);
     } else {
+      #[cfg(feature = "simd")]
+      super::simd_ops::simd_mul(&mut buffer.samples, gain);
+      #[cfg(not(feature = "simd"))]
       for sample in &mut buffer.samples {
         *sample *= gain;
       }

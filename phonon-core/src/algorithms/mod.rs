@@ -1,3 +1,6 @@
+#[cfg(feature = "simd")]
+pub(crate) mod simd_ops;
+
 pub mod channels;
 pub mod compressor;
 pub mod crossfade;
