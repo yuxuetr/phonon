@@ -63,7 +63,7 @@
 ### Phase B — 管线深度集成
 - [x] **B2** TTS 结果缓存 (phonon-ai/cache.rs) — CachingTts 装饰器,blake3 hash 键,文件缓存 ✅
 - [x] **B1** AI 音效生成接入管线 (phonon-podcast/pipeline.rs) — AssetSource::{File, Generated},自动 loop/trim ✅
-- [ ] **B3** Episode 出口 (phonon-podcast/export.rs) — Episode { audio, chapters, srt, tags },export_mp3/export_wav
+- [x] **B3** Episode 出口 (phonon-podcast/export.rs) — Episode { audio, chapters, srt, tags },export_mp3/export_wav ✅
 
 ### Phase C — MCP 暴露层
 - [ ] **C1** phonon-mcp crate

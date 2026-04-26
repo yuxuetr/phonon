@@ -1,5 +1,6 @@
 use crate::PodcastError;
 use crate::config::{AssetSource, PipelineConfig};
+use crate::export::{Episode, build_episode_metadata};
 use crate::script::PodcastScript;
 use phonon_ai::{AiError, SoundGenProvider, SoundPrompt, TtsProvider};
 use phonon_core::{self, AudioBuffer};
@@ -192,6 +193,72 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
     );
 
     Ok(assembled)
+  }
+
+  /// Generate a complete [`Episode`] — audio plus chapters and SRT
+  /// reconstructed from per-segment durations. The returned episode has
+  /// empty `tags`; populate them via [`Episode::with_tags`] before export.
+  #[instrument(skip(self, script), fields(title = %script.title))]
+  pub async fn generate_episode(
+    &self,
+    script: &PodcastScript,
+  ) -> Result<Episode, PodcastError> {
+    let config = &script.config;
+    let target_rate = config.output_sample_rate;
+    let target_channels = config.output_channels;
+
+    // Synthesize each segment one-by-one. (Concurrent variant is harder
+    // to reconcile with per-segment timing in the same pass; for now
+    // generate_episode trades concurrency for accurate chapter timing.)
+    let mut raw_buffers = Vec::with_capacity(script.segments.len());
+    for segment in &script.segments {
+      let mut voice = script
+        .speakers
+        .get(&segment.speaker)
+        .ok_or_else(|| PodcastError::Script(format!("Unknown speaker: {}", segment.speaker)))?
+        .clone();
+      if let Some(ref lang) = segment.language {
+        voice.language = Some(lang.clone());
+      }
+      let buf = self
+        .tts
+        .synthesize(&segment.text, &voice)
+        .await
+        .map_err(|e| PodcastError::Tts(e.to_string()))?;
+      raw_buffers.push(buf);
+    }
+
+    // Resample / channel-convert / per-segment normalize.
+    let processed = self.post_process_segments(raw_buffers, target_rate, target_channels)?;
+
+    // Capture durations *after* post-processing — these are what the
+    // listener will hear, so chapter / SRT timing must use them.
+    let segment_durations: Vec<f64> = processed.iter().map(|b| b.duration_secs()).collect();
+
+    let mut assembled = self.assemble_segments(processed, config)?;
+    assembled = self
+      .add_intro_outro(assembled, config, target_rate, target_channels)
+      .await?;
+    assembled = self
+      .mix_bgm(assembled, config, target_rate, target_channels)
+      .await?;
+
+    phonon_core::normalize(&mut assembled, config.normalize_target);
+    if config.fade_in_secs > 0.0 {
+      phonon_core::fade_in(&mut assembled, config.fade_in_secs);
+    }
+    if config.fade_out_secs > 0.0 {
+      phonon_core::fade_out(&mut assembled, config.fade_out_secs);
+    }
+
+    let (chapters, srt) =
+      build_episode_metadata(script, &segment_durations, config.pause_between_segments_secs);
+    let episode = Episode::new(assembled)
+      .with_chapters(chapters)
+      .with_srt(srt);
+
+    info!("Episode generation complete");
+    Ok(episode)
   }
 
   /// Generates a podcast and writes it to a WAV file.
@@ -637,6 +704,32 @@ mod tests {
     let err = pipeline.generate(&script).await.expect_err("should error");
     let s = err.to_string();
     assert!(s.contains("Failed to load"), "unexpected error: {}", s);
+  }
+
+  #[tokio::test]
+  async fn test_generate_episode_produces_chapters_and_srt() {
+    let json = r#"{
+      "title": "Episode 1",
+      "speakers": {
+        "alice": { "voice_id": "alloy" },
+        "bob":   { "voice_id": "echo" }
+      },
+      "segments": [
+        { "speaker": "alice", "text": "First half" },
+        { "speaker": "bob",   "text": "Second half" }
+      ]
+    }"#;
+    let script = PodcastScript::from_json(json).unwrap();
+    let pipeline = PodcastPipeline::new(MockTts);
+    let episode = pipeline.generate_episode(&script).await.unwrap();
+
+    assert!(!episode.audio.samples.is_empty());
+    assert_eq!(episode.chapters.len(), 2, "two distinct speakers → two chapters");
+    assert_eq!(episode.chapters[0].title, "alice");
+    assert_eq!(episode.chapters[1].title, "bob");
+    let srt = episode.srt.as_deref().unwrap_or("");
+    assert!(srt.contains("First half"));
+    assert!(srt.contains("Second half"));
   }
 
   #[tokio::test]

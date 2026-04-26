@@ -22,6 +22,7 @@
 
 pub mod chapters;
 pub mod config;
+pub mod export;
 pub mod pipeline;
 pub mod script;
 pub mod script_gen;
@@ -32,6 +33,7 @@ pub use chapters::{
   format_chapters_text,
 };
 pub use config::{AssetSource, PipelineConfig};
+pub use export::{Episode, build_episode_metadata};
 pub use pipeline::{NoSoundGen, PodcastPipeline};
 pub use script::{PodcastScript, Segment};
 pub use script_gen::{OpenAiScriptGenerator, ScriptGenerator, ScriptRequest};
