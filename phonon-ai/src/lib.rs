@@ -23,6 +23,7 @@
 //! # }
 //! ```
 
+pub mod cache;
 pub mod client;
 pub mod edge_tts;
 pub mod elevenlabs;
@@ -31,6 +32,7 @@ pub mod stt;
 pub mod tts;
 pub mod voice;
 
+pub use cache::CachingTts;
 pub use client::HttpClient;
 pub use edge_tts::EdgeTts;
 pub use elevenlabs::ElevenLabsTts;

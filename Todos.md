@@ -61,7 +61,7 @@
 - [x] **A4** 立体声 Pan (phonon-core/algorithms/pan.rs) — 等功率法则,pan_mono_to_stereo + pan_in_place ✅
 
 ### Phase B — 管线深度集成
-- [ ] **B2** TTS 结果缓存 (phonon-ai/cache.rs) — CachingTts 装饰器,blake3 hash 键,文件缓存
+- [x] **B2** TTS 结果缓存 (phonon-ai/cache.rs) — CachingTts 装饰器,blake3 hash 键,文件缓存 ✅
 - [ ] **B1** AI 音效生成接入管线 (phonon-podcast/pipeline.rs) — BgmSource::{File, Generated, None},自动 loop/trim
 - [ ] **B3** Episode 出口 (phonon-podcast/export.rs) — Episode { audio, chapters, srt, tags },export_mp3/export_wav
 
