@@ -16,3 +16,5 @@ mp3lame-encoder.workspace = true
 flacenc.workspace = true
 vorbis_rs.workspace = true
 fdk-aac.workspace = true
+id3.workspace = true
+metaflac.workspace = true
