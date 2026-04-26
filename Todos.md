@@ -66,12 +66,12 @@
 - [x] **B3** Episode 出口 (phonon-podcast/export.rs) — Episode { audio, chapters, srt, tags },export_mp3/export_wav ✅
 
 ### Phase C — MCP 暴露层
-- [ ] **C1** phonon-mcp crate
-  - [ ] 基础工具 (audio_load/save/info/list/drop)
-  - [ ] DSP 工具 (mix/trim/fade/normalize/normalize_lufs/eq/compress/volume_db/pan/resample)
-  - [ ] 测量工具 (audio_loudness)
-  - [ ] AI 工具 (tts_synthesize/tts_list_voices/sound_generate)
-  - [ ] 管线工具 (podcast_generate/podcast_export)
+- [x] **C1** phonon-mcp crate ✅
+  - [x] 基础工具 (audio_load/save/info/list/drop)
+  - [x] DSP 工具 (mix/trim/fade/normalize/normalize_lufs/volume_db/pan/resample)
+  - [x] 测量工具 (audio_loudness)
+  - [ ] AI 工具 (tts_synthesize/tts_list_voices/sound_generate) — 留作下游项目接入(provider 配置在调用方)
+  - [ ] 管线工具 (podcast_generate/podcast_export) — 留作下游项目接入
 
 ### 收尾
 - [ ] 集成测试 (phonon-tests: 端到端"脚本→tagged-mp3"流程)
