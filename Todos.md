@@ -47,12 +47,12 @@
 
 > 详细规划见 [RoadMap.md](./RoadMap.md)
 
-### Step 0 — WIP 清理基线
-- [ ] 提交 phonon-ai 新功能 (SoundPreset / ReplicateSoundGen / ElevenLabs PCM 流式)
-- [ ] 提交 phonon-core SIMD ops 模块
-- [ ] 提交 phonon-studio plugin browser 面板
-- [ ] 提交 workspace rustfmt 2-space 整理
-- [ ] cargo fmt --check + cargo test --workspace 双绿
+### Step 0 — WIP 清理基线 ✅ 已完成
+- [x] 提交 phonon-ai 新功能 (SoundPreset / ReplicateSoundGen / ElevenLabs PCM 流式)
+- [x] 提交 phonon-core SIMD ops 模块
+- [x] 提交 phonon-studio plugin browser 面板
+- [x] 提交 workspace rustfmt 2-space 整理
+- [x] cargo fmt --check + cargo test --workspace 双绿
 
 ### Phase A — 音频质量补齐
 - [ ] **A1** LUFS 响度 (phonon-core/algorithms/lufs.rs) — ITU-R BS.1770-4, K-weighting, gating, LUFS-I/S/M, LRA, 真峰值 dBTP, normalize_lufs
