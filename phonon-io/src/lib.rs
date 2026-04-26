@@ -13,15 +13,21 @@ use tracing::{info, instrument};
 
 pub mod aac;
 pub mod flac;
+pub mod flac_tags;
 pub mod mp3;
 pub mod mp3_tags;
 pub mod ogg;
+pub mod ogg_tags;
+pub mod tags;
 
 pub use aac::{AacConfig, write_aac};
 pub use flac::{FlacConfig, write_flac};
+pub use flac_tags::write_flac_tagged;
 pub use mp3::{Mp3Config, write_mp3};
-pub use mp3_tags::{AudioChapter, CoverArt, CoverMime, PodcastTags, attach_tag, write_mp3_tagged};
+pub use mp3_tags::{attach_tag, write_mp3_tagged};
 pub use ogg::{OggConfig, write_ogg};
+pub use ogg_tags::write_ogg_tagged;
+pub use tags::{AudioChapter, CoverArt, CoverMime, PodcastTags};
 
 /// Reads an audio file and decodes it into an AudioBuffer.
 ///

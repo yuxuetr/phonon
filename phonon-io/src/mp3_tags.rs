@@ -6,83 +6,12 @@
 //! frames so podcast players can jump between sections.
 
 use crate::mp3::{Mp3Config, write_mp3};
+use crate::tags::{AudioChapter, PodcastTags};
 use id3::frame::{Chapter as Id3Chapter, Content, Picture, PictureType, TableOfContents};
 use id3::{Frame, Tag, TagLike, Version};
 use phonon_core::{AudioBuffer, PhononError, Result};
 use std::path::Path;
 use tracing::{info, instrument};
-
-/// MIME type of a cover image.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CoverMime {
-  Jpeg,
-  Png,
-}
-
-impl CoverMime {
-  fn as_str(&self) -> &'static str {
-    match self {
-      Self::Jpeg => "image/jpeg",
-      Self::Png => "image/png",
-    }
-  }
-}
-
-/// Cover image to embed as ID3v2 APIC frame.
-#[derive(Debug, Clone)]
-pub struct CoverArt {
-  pub mime: CoverMime,
-  pub data: Vec<u8>,
-  /// Optional human-readable description (default: "Cover").
-  pub description: Option<String>,
-}
-
-/// Podcast / track metadata for an MP3 file.
-///
-/// All fields are optional; only those that are `Some` will be written.
-#[derive(Debug, Clone, Default)]
-pub struct PodcastTags {
-  /// Episode title (TIT2).
-  pub title: Option<String>,
-  /// Show / artist name (TPE1).
-  pub artist: Option<String>,
-  /// Album / show title (TALB).
-  pub album: Option<String>,
-  /// Year (TYER).
-  pub year: Option<i32>,
-  /// Genre (TCON).
-  pub genre: Option<String>,
-  /// Free-form comment (COMM).
-  pub comment: Option<String>,
-  /// Language code, e.g. "eng", "zho" (TLAN).
-  pub language: Option<String>,
-  /// Track number (TRCK).
-  pub track: Option<u32>,
-  /// Cover art (APIC, PictureType::CoverFront).
-  pub cover: Option<CoverArt>,
-}
-
-/// A chapter marker for embedding as an ID3v2 CHAP frame.
-///
-/// Times are in seconds. End time is required by the spec; if your source
-/// chapter has no end, use the start of the next chapter (or the total
-/// duration for the final chapter).
-#[derive(Debug, Clone)]
-pub struct AudioChapter {
-  pub title: String,
-  pub start_secs: f64,
-  pub end_secs: f64,
-}
-
-impl AudioChapter {
-  pub fn new(title: impl Into<String>, start_secs: f64, end_secs: f64) -> Self {
-    Self {
-      title: title.into(),
-      start_secs,
-      end_secs,
-    }
-  }
-}
 
 /// Encode an MP3 with embedded ID3v2 metadata and chapter markers.
 ///
@@ -218,6 +147,7 @@ fn secs_to_ms(secs: f64) -> u32 {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::tags::{CoverArt, CoverMime};
 
   fn make_buffer() -> AudioBuffer {
     let sr = 44100_u32;
