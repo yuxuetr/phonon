@@ -18,6 +18,7 @@ pub use algorithms::merge::merge;
 pub use algorithms::mix::mix;
 pub use algorithms::normalize::normalize;
 pub use algorithms::overlay::overlay_at_position;
+pub use algorithms::pan::{pan_mono_to_stereo, pan_stereo, pan_stereo_in_place};
 pub use algorithms::repeat::repeat;
 pub use algorithms::resample::resample;
 pub use algorithms::reverse::reverse;
