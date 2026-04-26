@@ -1,8 +1,9 @@
-pub mod header;
-pub mod waveform;
-pub mod spectrum;
-pub mod info_panel;
 pub mod effects_panel;
 pub mod eq_panel;
 pub mod export_panel;
+pub mod header;
+pub mod info_panel;
+pub mod plugin_browser;
+pub mod spectrum;
 pub mod transport;
+pub mod waveform;

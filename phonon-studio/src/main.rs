@@ -3,131 +3,133 @@
 mod components;
 mod state;
 
-use dioxus::prelude::*;
 use dioxus::html::HasFileData;
+use dioxus::prelude::*;
 use dioxus_logger::tracing;
 use std::sync::Arc;
 
 use components::{
-    effects_panel::EffectsPanel, eq_panel::EqPanel, export_panel::ExportPanel, header::Header,
-    info_panel::InfoPanel, transport::Transport, waveform::WaveformView,
+  effects_panel::EffectsPanel, eq_panel::EqPanel, export_panel::ExportPanel, header::Header,
+  info_panel::InfoPanel, plugin_browser::PluginBrowser, transport::Transport,
+  waveform::WaveformView,
 };
-use state::{build_display_info, AppState, SidePanel};
+use state::{AppState, SidePanel, build_display_info};
 
 /// Tailwind CSS asset for desktop and web
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
 fn main() {
-    if let Err(e) = dioxus_logger::init(tracing::Level::INFO) {
-        eprintln!("Failed to init logger: {}", e);
-    }
-    launch(App);
+  if let Err(e) = dioxus_logger::init(tracing::Level::INFO) {
+    eprintln!("Failed to init logger: {}", e);
+  }
+  launch(App);
 }
 
 fn App() -> Element {
-    // Provide global state via context
-    let state = use_hook(AppState::init);
-    use_context_provider(|| state);
+  // Provide global state via context
+  let state = use_hook(AppState::init);
+  use_context_provider(|| state);
 
-    rsx! {
-        document::Stylesheet { href: TAILWIND_CSS }
-        div {
-            class: "flex flex-col h-dvh bg-neutral-900 text-gray-200 font-sans overflow-hidden",
+  rsx! {
+      document::Stylesheet { href: TAILWIND_CSS }
+      div {
+          class: "flex flex-col h-dvh bg-neutral-900 text-gray-200 font-sans overflow-hidden",
 
-            // Drag-and-drop overlay
-            ondragover: move |evt| { evt.prevent_default(); },
-            ondrop: move |evt| {
-                evt.prevent_default();
-                let mut s = state;
-                async move {
-                    handle_drop(&mut s, evt).await;
-                }
-            },
+          // Drag-and-drop overlay
+          ondragover: move |evt| { evt.prevent_default(); },
+          ondrop: move |evt| {
+              evt.prevent_default();
+              let mut s = state;
+              async move {
+                  handle_drop(&mut s, evt).await;
+              }
+          },
 
-            // --- Header ---
-            Header {}
+          // --- Header ---
+          Header {}
 
-            // --- Main workspace ---
-            div {
-                class: "flex-1 flex overflow-hidden",
+          // --- Main workspace ---
+          div {
+              class: "flex-1 flex overflow-hidden",
 
-                // Main content
-                main {
-                    class: "flex-1 flex flex-col items-center justify-start p-6 overflow-y-auto",
+              // Main content
+              main {
+                  class: "flex-1 flex flex-col items-center justify-start p-6 overflow-y-auto",
 
-                    if (state.display_info)().is_some() {
-                        WaveformView {}
-                        InfoPanel {}
-                    } else {
-                        div {
-                            class: "text-center text-gray-500 mt-16",
-                            h2 { class: "text-2xl font-bold mb-2", "No Audio Loaded" }
-                            p { "Click 'Open Audio File' or drag & drop an audio file to start." }
-                        }
-                    }
-                }
+                  if (state.display_info)().is_some() {
+                      WaveformView {}
+                      InfoPanel {}
+                  } else {
+                      div {
+                          class: "text-center text-gray-500 mt-16",
+                          h2 { class: "text-2xl font-bold mb-2", "No Audio Loaded" }
+                          p { "Click 'Open Audio File' or drag & drop an audio file to start." }
+                      }
+                  }
+              }
 
-                // Side panel
-                if (state.side_panel)() != SidePanel::None {
-                    aside {
-                        class: "w-80 bg-neutral-800 border-l border-neutral-700 p-4 overflow-y-auto flex flex-col gap-4",
+              // Side panel
+              if (state.side_panel)() != SidePanel::None {
+                  aside {
+                      class: "w-80 bg-neutral-800 border-l border-neutral-700 p-4 overflow-y-auto flex flex-col gap-4",
 
-                        match (state.side_panel)() {
-                            SidePanel::Effects => rsx! { EffectsPanel {} },
-                            SidePanel::Eq => rsx! { EqPanel {} },
-                            SidePanel::Export => rsx! { ExportPanel {} },
-                            SidePanel::None => rsx! {},
-                        }
-                    }
-                }
-            }
+                      match (state.side_panel)() {
+                          SidePanel::Effects => rsx! { EffectsPanel {} },
+                          SidePanel::Eq => rsx! { EqPanel {} },
+                          SidePanel::Export => rsx! { ExportPanel {} },
+                          SidePanel::Plugins => rsx! { PluginBrowser {} },
+                          SidePanel::None => rsx! {},
+                      }
+                  }
+              }
+          }
 
-            // --- Transport ---
-            Transport {}
-        }
-    }
+          // --- Transport ---
+          Transport {}
+      }
+  }
 }
 
 /// Handle drag-and-drop file loading.
 async fn handle_drop(state: &mut AppState, evt: Event<DragData>) {
-    let file_list = evt.data().files();
-    let Some(first_file) = file_list.first() else { return };
-    let first_name = first_file.name();
+  let file_list = evt.data().files();
+  let Some(first_file) = file_list.first() else {
+    return;
+  };
+  let first_name = first_file.name();
 
-    let path_lower = first_name.to_lowercase();
-    let supported = ["wav", "mp3", "flac", "ogg", "aac", "m4a", "mp4"];
-    let is_audio = supported.iter().any(|ext| path_lower.ends_with(ext));
-    if !is_audio {
-        state
-            .status_msg
-            .set("Unsupported file format".to_string());
-        return;
+  let path_lower = first_name.to_lowercase();
+  let supported = ["wav", "mp3", "flac", "ogg", "aac", "m4a", "mp4"];
+  let is_audio = supported.iter().any(|ext| path_lower.ends_with(ext));
+  if !is_audio {
+    state.status_msg.set("Unsupported file format".to_string());
+    return;
+  }
+
+  let path_buf = std::path::PathBuf::from(&first_name);
+  let path_str = path_buf.to_string_lossy().to_string();
+  state
+    .status_msg
+    .set(format!("Loading {}...", path_buf.display()));
+
+  let load_result = tokio::task::spawn_blocking(move || phonon_io::read_audio(&path_buf)).await;
+
+  let buffer = match load_result {
+    Ok(Ok(buf)) => buf,
+    Ok(Err(e)) => {
+      state.status_msg.set(format!("Error: {}", e));
+      return;
     }
+    Err(e) => {
+      state.status_msg.set(format!("Task error: {}", e));
+      return;
+    }
+  };
 
-    let path_buf = std::path::PathBuf::from(&first_name);
-    let path_str = path_buf.to_string_lossy().to_string();
-    state
-        .status_msg
-        .set(format!("Loading {}...", path_buf.display()));
-
-    let load_result = tokio::task::spawn_blocking(move || phonon_io::read_audio(&path_buf)).await;
-
-    let buffer = match load_result {
-        Ok(Ok(buf)) => buf,
-        Ok(Err(e)) => {
-            state.status_msg.set(format!("Error: {}", e));
-            return;
-        }
-        Err(e) => {
-            state.status_msg.set(format!("Task error: {}", e));
-            return;
-        }
-    };
-
-    let info = build_display_info(&buffer, &path_str);
-    state.display_info.set(Some(info));
-    state.audio_buffer.set(Some(Arc::new(buffer)));
-    state
-        .status_msg
-        .set("File loaded (drag & drop)".to_string());
+  let info = build_display_info(&buffer, &path_str);
+  state.display_info.set(Some(info));
+  state.audio_buffer.set(Some(Arc::new(buffer)));
+  state
+    .status_msg
+    .set("File loaded (drag & drop)".to_string());
 }
