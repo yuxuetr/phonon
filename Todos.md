@@ -43,12 +43,46 @@
 - [x] Wasm 支持 (phonon-wasm: wasm-bindgen bindings + demo HTML, phonon-core parallel feature gate)
 - [x] 插件架构 (phonon-core: DspPlugin trait, PluginParam, PluginRegistry, 5 内建插件)
 
-## 下一步 — 待规划
+## v0.7 — AI 播客生产就绪 + MCP 暴露 (进行中)
+
+> 详细规划见 [RoadMap.md](./RoadMap.md)
+
+### Step 0 — WIP 清理基线
+- [ ] 提交 phonon-ai 新功能 (SoundPreset / ReplicateSoundGen / ElevenLabs PCM 流式)
+- [ ] 提交 phonon-core SIMD ops 模块
+- [ ] 提交 phonon-studio plugin browser 面板
+- [ ] 提交 workspace rustfmt 2-space 整理
+- [ ] cargo fmt --check + cargo test --workspace 双绿
+
+### Phase A — 音频质量补齐
+- [ ] **A1** LUFS 响度 (phonon-core/algorithms/lufs.rs) — ITU-R BS.1770-4, K-weighting, gating, LUFS-I/S/M, LRA, 真峰值 dBTP, normalize_lufs
+- [ ] **A2** MP3 ID3v2 标签 + 章节 (phonon-io/mp3_tags.rs) — id3 crate, PodcastTags, CHAP/CTOC frames, write_mp3_tagged
+- [ ] **A3** FLAC / OGG Vorbis Comment (phonon-io/tags.rs) — 通用元数据写入
+- [ ] **A4** 立体声 Pan (phonon-core/algorithms/pan.rs) — 等功率法则,pan_mono_to_stereo + pan_in_place
+
+### Phase B — 管线深度集成
+- [ ] **B2** TTS 结果缓存 (phonon-ai/cache.rs) — CachingTts 装饰器,blake3 hash 键,文件缓存
+- [ ] **B1** AI 音效生成接入管线 (phonon-podcast/pipeline.rs) — BgmSource::{File, Generated, None},自动 loop/trim
+- [ ] **B3** Episode 出口 (phonon-podcast/export.rs) — Episode { audio, chapters, srt, tags },export_mp3/export_wav
+
+### Phase C — MCP 暴露层
+- [ ] **C1** phonon-mcp crate
+  - [ ] 基础工具 (audio_load/save/info/list/drop)
+  - [ ] DSP 工具 (mix/trim/fade/normalize/normalize_lufs/eq/compress/volume_db/pan/resample)
+  - [ ] 测量工具 (audio_loudness)
+  - [ ] AI 工具 (tts_synthesize/tts_list_voices/sound_generate)
+  - [ ] 管线工具 (podcast_generate/podcast_export)
+
+### 收尾
+- [ ] 集成测试 (phonon-tests: 端到端"脚本→tagged-mp3"流程)
+- [ ] README / AGENTS.md / CHANGELOG 更新
+- [ ] Todos.md 全部 DONE 标记
+
+## 远期(v0.8+)
 
 - [ ] 流式 TTS (边合成边播放)
-- [ ] AI 音效生成 (BGM/SFX)
 - [ ] AudioEffect / DspPlugin 架构统一 (phonon-engine 适配 phonon-core plugin)
 - [ ] wasm-pack 构建验证 + 在线 demo 部署
-- [ ] Studio 插件浏览器面板
-- [ ] SIMD 优化 (关键 DSP 路径)
+- [ ] SIMD 优化扩展 (其他热点 DSP 路径)
 - [ ] 发布到 crates.io
+- [ ] VST3 / CLAP 插件兼容层

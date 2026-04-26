@@ -1,0 +1,98 @@
+# Phonon RoadMap
+
+## 项目定位
+
+**Phonon 是一个纯 Rust 音频库**,为"AI 播客 / AI 音频应用"提供从底层 DSP 到 LLM Tool Calling 的完整能力。
+
+### 职责边界
+
+| 职责 | 归属 |
+|---|---|
+| **音频处理 / TTS / STT / 混音 / 编解码** | ✅ 本项目 (phonon) |
+| **音频功能的 MCP 暴露 / Tool 调用** | ✅ 本项目 (phonon-mcp) |
+| **Markdown / HTML / RSS / URL 解析** | ❌ 另立项目 (data-source 项目) |
+| **网页抓取 / 文档摘要 / 长文切分** | ❌ 另立项目 |
+| **LLM Agent 编排 / 业务工作流** | ❌ 另立项目 |
+
+数据源项目通过 MCP 协议消费 phonon 的能力,本项目专注于"声音"。
+
+## 已交付能力(v0.1 → v0.6)
+
+- **v0.1**: WAV 读写 + AudioBuffer
+- **v0.2**: pydub 等价(overlay/reverse/repeat/dBFS)+ MP3 输出 + Edge TTS + 并发合成
+- **v0.3**: 压缩器 + 信号发生器 + ElevenLabs + LLM 脚本 + 播放控制
+- **v0.4**: STT (Whisper) + SRT + 章节 + 视频音轨 + Server + benchmarks
+- **v0.5**: Lanczos sinc + FLAC/OGG/AAC + EffectChain + CI
+- **v0.6**: 多频段 EQ + rayon 并行 + Studio UI + Wasm + Plugin 架构
+
+## v0.7 计划 — AI 播客生产就绪 + MCP 暴露
+
+### 设计目标
+
+1. **音频输出达到播客平台合规标准**(LUFS / ID3 / Vorbis Comment / 章节)
+2. **管线深度集成 AI 音效生成 + TTS 缓存**
+3. **以 MCP 协议向上层 Agent 暴露所有能力**
+
+### Phase A — 音频质量补齐
+
+| ID | 模块 | 内容 | 输出 |
+|---|---|---|---|
+| **A1** | `phonon-core/algorithms/lufs.rs` | ITU-R BS.1770-4 / EBU R128 实现 | LUFS-I / S / M, LRA, dBTP, `normalize_lufs` |
+| **A2** | `phonon-io/mp3_tags.rs` | id3 crate 集成 | `PodcastTags`, CHAP/CTOC 章节, `write_mp3_tagged` |
+| **A3** | `phonon-io/tags.rs` | Vorbis Comment block | FLAC/OGG 通用元数据 |
+| **A4** | `phonon-core/algorithms/pan.rs` | 等功率声场定位 | `pan_mono_to_stereo`, `pan_in_place` |
+
+### Phase B — 管线深度集成
+
+| ID | 模块 | 内容 |
+|---|---|---|
+| **B1** | `phonon-podcast/pipeline.rs` + `config.rs` | `BgmSource::{File, Generated, None}`,intro/outro 同样支持 AI 生成,自动 loop/trim |
+| **B2** | `phonon-ai/cache.rs` | `CachingTts<T>` 装饰器,blake3 缓存键,可选 dir |
+| **B3** | `phonon-podcast/export.rs` | `Episode { audio, chapters, srt, tags }` + `export_mp3 / export_wav` |
+
+### Phase C — MCP 暴露层
+
+**新增 `phonon-mcp` crate**,使用官方 `rmcp` SDK,stdio 传输。
+
+#### Asset Registry
+- `AudioHandle = Uuid`
+- 内存 `HashMap<Uuid, Arc<AudioBuffer>>`
+- 工具调用只在 LLM ↔ MCP 之间传句柄,不传大块音频数据
+
+#### 工具集
+
+| 类别 | Tools |
+|---|---|
+| **基础** | `audio_load`, `audio_save`, `audio_info`, `audio_list`, `audio_drop` |
+| **DSP** | `audio_mix`, `audio_trim`, `audio_fade`, `audio_normalize`, `audio_normalize_lufs`, `audio_eq`, `audio_compress`, `audio_volume_db`, `audio_pan`, `audio_resample` |
+| **测量** | `audio_loudness`(返回 LUFS / peak / RMS / dBTP) |
+| **AI** | `tts_synthesize`, `tts_list_voices`, `sound_generate` |
+| **管线** | `podcast_generate`(脚本→episode 句柄)/ `podcast_export`(句柄→tagged mp3) |
+
+每个 tool 通过 `schemars` 自动派生 JSON Schema,LLM 可零配置发现并调用。
+
+## 不在本项目范围(数据源项目处理)
+
+- 文档解析:Markdown / HTML / PDF / DOCX
+- 内容获取:URL / RSS / 文件系统监听
+- 长文工程:切分 / 摘要 / 主题抽取
+- 脚本工程:从博客内容生成 `PodcastScript` 的业务逻辑(本项目仅提供 `ScriptGenerator` trait + 一个 OpenAI 实现作为参考,数据源项目可替换)
+
+## 后续(v0.8+ 远期)
+
+- 流式 TTS(边合成边播)
+- AudioEffect / DspPlugin 架构统一
+- wasm-pack 在线 demo
+- 发布 crates.io
+- VST3 / CLAP 兼容层(如有需要)
+
+## 执行节奏
+
+- 每个子任务完成后单独提交,提交信息符合 Conventional Commits
+- 每完成一个子任务更新一次 `Todos.md`(TODO → DONE)
+- 通过 `cargo test --workspace` 才标记完成
+- 严禁 `unwrap()` / `expect()`(测试除外)
+
+---
+
+**最后更新**: 2026-04-26
