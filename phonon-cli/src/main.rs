@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand, ValueEnum};
-use phonon_ai::{OpenAiTts, SttProvider, TranscribeOptions, TtsProvider, VoiceConfig, WhisperStt};
+use phonon_ai::{
+  EdgeTts, OpenAiTts, SttProvider, TranscribeOptions, TtsProvider, VoiceConfig, WhisperStt,
+};
 use phonon_core::{FilterType, algorithms};
 use phonon_engine::AudioPlayer;
+use phonon_io::{AudioChapter, CoverArt, CoverMime, Mp3Config, PodcastTags, attach_tag};
 use phonon_podcast::chapters::{SilenceDetectConfig, chapters_from_silence, format_chapters_text};
 use phonon_podcast::subtitle::segments_to_srt_file;
 use phonon_podcast::{PodcastPipeline, PodcastScript};
@@ -166,6 +169,7 @@ enum Commands {
     language: Option<String>,
   },
   /// Detect chapters in audio (via silence detection)
+  #[command(allow_negative_numbers = true)]
   Chapters {
     /// Audio file to analyze
     #[arg(short, long)]
@@ -187,6 +191,111 @@ enum Commands {
     #[command(subcommand)]
     action: PodcastAction,
   },
+  /// Measure or normalize loudness (ITU-R BS.1770-4 / EBU R128)
+  #[command(allow_negative_numbers = true)]
+  Lufs {
+    /// Audio file to measure
+    #[arg(short, long)]
+    input: PathBuf,
+    /// Output file. If set together with `--target`, normalize and write here.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    /// Target integrated loudness in LUFS (e.g. -16 for podcasts).
+    /// Required when `--output` is given.
+    #[arg(long)]
+    target: Option<f32>,
+    /// True-peak ceiling in dBTP. Default: -1.0 (only used when normalizing).
+    #[arg(long, default_value_t = -1.0)]
+    true_peak: f32,
+  },
+  /// Write ID3v2.4 tags + chapters into an existing MP3 (in place)
+  TagMp3 {
+    /// MP3 file to tag (modified in place)
+    #[arg(short, long)]
+    input: PathBuf,
+    /// Track title
+    #[arg(long)]
+    title: Option<String>,
+    /// Artist / author
+    #[arg(long)]
+    artist: Option<String>,
+    /// Album / show name
+    #[arg(long)]
+    album: Option<String>,
+    /// Year (e.g. 2026)
+    #[arg(long)]
+    year: Option<i32>,
+    /// Genre (e.g. Podcast)
+    #[arg(long)]
+    genre: Option<String>,
+    /// Free-form comment
+    #[arg(long)]
+    comment: Option<String>,
+    /// ISO-639-2 language code (e.g. eng, zho)
+    #[arg(long)]
+    language: Option<String>,
+    /// Track number
+    #[arg(long)]
+    track: Option<u32>,
+    /// Path to a JPEG or PNG cover image (extension determines MIME)
+    #[arg(long)]
+    cover: Option<PathBuf>,
+    /// Path to a JSON file with chapter markers in the form
+    /// `[{"title":"Intro","start_secs":0.0,"end_secs":15.0}, ...]`
+    #[arg(long)]
+    chapters: Option<PathBuf>,
+  },
+  /// One-shot: script -> tagged MP3 + sidecar SRT, with LUFS normalization
+  #[command(allow_negative_numbers = true)]
+  EpisodeExport {
+    /// PodcastScript JSON path
+    #[arg(short, long)]
+    script: PathBuf,
+    /// Output MP3 path (must end in .mp3)
+    #[arg(short, long)]
+    output: PathBuf,
+    /// TTS provider
+    #[arg(long, value_enum, default_value_t = TtsBackend::Edge)]
+    provider: TtsBackend,
+    /// MP3 bitrate in kbps
+    #[arg(long, default_value_t = 192)]
+    bitrate: u32,
+    /// Target loudness in LUFS. Set to a non-finite value (e.g. NaN) to skip.
+    #[arg(long, default_value_t = -16.0)]
+    lufs: f32,
+    /// True-peak ceiling in dBTP (used together with `--lufs`)
+    #[arg(long, default_value_t = -1.0)]
+    true_peak: f32,
+    /// Sidecar SRT path. Defaults to the MP3 path with `.srt` extension.
+    #[arg(long)]
+    srt: Option<PathBuf>,
+    /// Tags (override what's in the script title). Cover art uses `--cover`.
+    #[arg(long)]
+    title: Option<String>,
+    #[arg(long)]
+    artist: Option<String>,
+    #[arg(long)]
+    album: Option<String>,
+    #[arg(long)]
+    year: Option<i32>,
+    #[arg(long)]
+    genre: Option<String>,
+    #[arg(long)]
+    language: Option<String>,
+    #[arg(long)]
+    track: Option<u32>,
+    /// Path to a JPEG or PNG cover image
+    #[arg(long)]
+    cover: Option<PathBuf>,
+  },
+}
+
+#[derive(Clone, Copy, ValueEnum, Debug)]
+enum TtsBackend {
+  /// Microsoft Edge TTS — free, no API key required.
+  Edge,
+  /// OpenAI TTS — needs `OPENAI_API_KEY`.
+  Openai,
 }
 
 #[derive(Subcommand)]
@@ -520,6 +629,170 @@ async fn main() -> anyhow::Result<()> {
         }
       }
     },
+    Commands::Lufs {
+      input,
+      output,
+      target,
+      true_peak,
+    } => {
+      let mut buffer = phonon_io::read_audio(input)?;
+      let report = phonon_core::measure_loudness(&buffer);
+      println!("File: {:?}", input);
+      println!("Duration:           {:.2} s", buffer.duration_secs());
+      println!("Integrated:         {:>7.2} LUFS", report.integrated_lufs);
+      println!(
+        "Short-term max:     {:>7.2} LUFS",
+        report.short_term_max_lufs
+      );
+      println!(
+        "Momentary max:      {:>7.2} LUFS",
+        report.momentary_max_lufs
+      );
+      println!("Loudness range:     {:>7.2} LU", report.range_lu);
+      println!("True peak:          {:>7.2} dBTP", report.true_peak_dbtp);
+      println!("Sample peak:        {:>7.4}", phonon_core::peak(&buffer));
+      println!("RMS:                {:>7.4}", phonon_core::rms(&buffer));
+
+      if let Some(out_path) = output {
+        let target_lufs = target
+          .ok_or_else(|| anyhow::anyhow!("--target <LUFS> is required when --output is set"))?;
+        phonon_core::normalize_lufs(&mut buffer, target_lufs, *true_peak);
+        phonon_io::write_audio(out_path, &buffer)?;
+        let after = phonon_core::measure_loudness(&buffer);
+        println!(
+          "Normalized to {:.2} LUFS / true peak {:.2} dBTP -> {:?}",
+          after.integrated_lufs, after.true_peak_dbtp, out_path
+        );
+      }
+    }
+    Commands::TagMp3 {
+      input,
+      title,
+      artist,
+      album,
+      year,
+      genre,
+      comment,
+      language,
+      track,
+      cover,
+      chapters,
+    } => {
+      let tags = PodcastTags {
+        title: title.clone(),
+        artist: artist.clone(),
+        album: album.clone(),
+        year: *year,
+        genre: genre.clone(),
+        comment: comment.clone(),
+        language: language.clone(),
+        track: *track,
+        cover: load_cover(cover.as_deref())?,
+      };
+      let chapter_list = match chapters.as_deref() {
+        Some(p) => load_chapters_json(p)?,
+        None => Vec::new(),
+      };
+      attach_tag(input, &tags, &chapter_list)?;
+      println!(
+        "Tagged {:?} ({} chapters, cover: {})",
+        input,
+        chapter_list.len(),
+        tags.cover.is_some(),
+      );
+    }
+    Commands::EpisodeExport {
+      script,
+      output,
+      provider,
+      bitrate,
+      lufs,
+      true_peak,
+      srt,
+      title,
+      artist,
+      album,
+      year,
+      genre,
+      language,
+      track,
+      cover,
+    } => {
+      if output
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        != Some("mp3".to_string())
+      {
+        anyhow::bail!("--output must be a .mp3 path (got {:?})", output);
+      }
+
+      println!("Loading script from {:?}...", script);
+      let podcast_script = PodcastScript::from_file(script)?;
+      println!(
+        "'{}' — {} segments, {} speakers",
+        podcast_script.title,
+        podcast_script.segment_count(),
+        podcast_script.speaker_names().len()
+      );
+
+      // Generate the episode (audio + chapters + SRT) using the chosen TTS provider.
+      // We branch here because `PodcastPipeline<T>` is generic over the provider.
+      let mut episode = match provider {
+        TtsBackend::Edge => {
+          println!("Provider: Edge TTS (free, keyless)");
+          let pipeline = PodcastPipeline::new(EdgeTts::new());
+          pipeline.generate_episode(&podcast_script).await?
+        }
+        TtsBackend::Openai => {
+          println!("Provider: OpenAI TTS");
+          let tts = OpenAiTts::new()?;
+          let pipeline = PodcastPipeline::new(tts);
+          pipeline.generate_episode(&podcast_script).await?
+        }
+      };
+
+      if lufs.is_finite() {
+        println!(
+          "Loudness-normalizing to {:.1} LUFS / {:.1} dBTP...",
+          lufs, true_peak
+        );
+        phonon_core::normalize_lufs(&mut episode.audio, *lufs, *true_peak);
+      }
+
+      // Title in tags falls back to the script title.
+      let resolved_title = title.clone().or_else(|| Some(podcast_script.title.clone()));
+
+      let tags = PodcastTags {
+        title: resolved_title,
+        artist: artist.clone(),
+        album: album.clone(),
+        year: *year,
+        genre: genre.clone(),
+        comment: None,
+        language: language.clone(),
+        track: *track,
+        cover: load_cover(cover.as_deref())?,
+      };
+      episode = episode.with_tags(tags);
+
+      let mp3_cfg = Mp3Config {
+        bitrate_kbps: *bitrate,
+      };
+      episode.export_mp3(output, &mp3_cfg)?;
+      println!(
+        "Exported tagged MP3 -> {:?} ({} chapters, {:.2} s)",
+        output,
+        episode.chapters.len(),
+        episode.audio.duration_secs(),
+      );
+
+      let srt_path = srt.clone().unwrap_or_else(|| output.with_extension("srt"));
+      if episode.srt.is_some() {
+        episode.write_srt(&srt_path)?;
+        println!("Wrote SRT -> {:?}", srt_path);
+      }
+    }
     Commands::Podcast { action } => match action {
       PodcastAction::Generate { script, output } => {
         println!("Loading script from {:?}...", script);
@@ -560,4 +833,120 @@ async fn main() -> anyhow::Result<()> {
   }
 
   Ok(())
+}
+
+/// Load a cover image from disk for embedding into a tag.
+///
+/// MIME is inferred from the file extension. Returns `Ok(None)` when no path
+/// is supplied so callers can pass the result straight into a `PodcastTags`.
+fn load_cover(path: Option<&std::path::Path>) -> anyhow::Result<Option<CoverArt>> {
+  let Some(p) = path else { return Ok(None) };
+  let ext = p
+    .extension()
+    .and_then(|e| e.to_str())
+    .map(|e| e.to_lowercase())
+    .unwrap_or_default();
+  let mime = match ext.as_str() {
+    "jpg" | "jpeg" => CoverMime::Jpeg,
+    "png" => CoverMime::Png,
+    other => anyhow::bail!("unsupported cover image extension '.{other}': use .jpg or .png"),
+  };
+  let data = std::fs::read(p)?;
+  Ok(Some(CoverArt {
+    mime,
+    data,
+    description: None,
+  }))
+}
+
+#[cfg(test)]
+mod helper_tests {
+  use super::*;
+  use std::io::Write;
+
+  #[test]
+  fn test_load_cover_none() {
+    let result = load_cover(None).unwrap();
+    assert!(result.is_none());
+  }
+
+  #[test]
+  fn test_load_cover_jpg() {
+    let mut tmp = tempfile::Builder::new().suffix(".jpg").tempfile().unwrap();
+    tmp.write_all(&[0xFF, 0xD8, 0xFF, 0xE0]).unwrap();
+    let cover = load_cover(Some(tmp.path())).unwrap().unwrap();
+    assert_eq!(cover.mime, CoverMime::Jpeg);
+    assert_eq!(cover.data, vec![0xFF, 0xD8, 0xFF, 0xE0]);
+  }
+
+  #[test]
+  fn test_load_cover_unknown_extension() {
+    let tmp = tempfile::Builder::new().suffix(".gif").tempfile().unwrap();
+    let err = load_cover(Some(tmp.path())).unwrap_err();
+    assert!(
+      err
+        .to_string()
+        .contains("unsupported cover image extension")
+    );
+  }
+
+  #[test]
+  fn test_load_chapters_json_roundtrip() {
+    let mut tmp = tempfile::NamedTempFile::new().unwrap();
+    let json = r#"[
+      {"title":"Intro","start_secs":0.0,"end_secs":1.5},
+      {"title":"Body","start_secs":1.5,"end_secs":4.0}
+    ]"#;
+    tmp.write_all(json.as_bytes()).unwrap();
+    let chapters = load_chapters_json(tmp.path()).unwrap();
+    assert_eq!(chapters.len(), 2);
+    assert_eq!(chapters[0].title, "Intro");
+    assert!((chapters[0].end_secs - 1.5).abs() < 1e-9);
+    assert!((chapters[1].start_secs - 1.5).abs() < 1e-9);
+  }
+
+  #[test]
+  fn test_load_chapters_json_rejects_non_array() {
+    let mut tmp = tempfile::NamedTempFile::new().unwrap();
+    tmp.write_all(b"{\"foo\":1}").unwrap();
+    assert!(load_chapters_json(tmp.path()).is_err());
+  }
+
+  #[test]
+  fn test_load_chapters_json_missing_field() {
+    let mut tmp = tempfile::NamedTempFile::new().unwrap();
+    tmp
+      .write_all(b"[{\"title\":\"X\",\"start_secs\":0.0}]")
+      .unwrap();
+    let err = load_chapters_json(tmp.path()).unwrap_err();
+    assert!(err.to_string().contains("end_secs"));
+  }
+}
+
+/// Parse a chapter list from JSON. Accepts the canonical
+/// `[{"title":"…","start_secs":0.0,"end_secs":1.0}, …]` shape used by the
+/// `tag-mp3` subcommand.
+fn load_chapters_json(path: &std::path::Path) -> anyhow::Result<Vec<AudioChapter>> {
+  let text = std::fs::read_to_string(path)?;
+  let raw: serde_json::Value = serde_json::from_str(&text)?;
+  let arr = raw
+    .as_array()
+    .ok_or_else(|| anyhow::anyhow!("chapters JSON must be a top-level array"))?;
+  let mut chapters = Vec::with_capacity(arr.len());
+  for (i, item) in arr.iter().enumerate() {
+    let title = item
+      .get("title")
+      .and_then(|v| v.as_str())
+      .ok_or_else(|| anyhow::anyhow!("chapter {i}: missing string field 'title'"))?;
+    let start_secs = item
+      .get("start_secs")
+      .and_then(|v| v.as_f64())
+      .ok_or_else(|| anyhow::anyhow!("chapter {i}: missing number field 'start_secs'"))?;
+    let end_secs = item
+      .get("end_secs")
+      .and_then(|v| v.as_f64())
+      .ok_or_else(|| anyhow::anyhow!("chapter {i}: missing number field 'end_secs'"))?;
+    chapters.push(AudioChapter::new(title.to_string(), start_secs, end_secs));
+  }
+  Ok(chapters)
 }
