@@ -4211,6 +4211,7 @@ dependencies = [
  "cpal",
  "phonon-core",
  "thiserror 1.0.69",
+ "tokio",
  "tracing",
 ]
 

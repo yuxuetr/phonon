@@ -82,7 +82,7 @@
 
 ## 远期(v0.8+)
 
-- [ ] 流式 TTS (边合成边播放)
+- [x] 流式 TTS (边合成边播放) — phonon-engine `stream::play_stream` + `convert_for_device`,串接 `TtsProvider::synthesize_streaming` ✅
 - [ ] AudioEffect / DspPlugin 架构统一 (phonon-engine 适配 phonon-core plugin)
 - [ ] wasm-pack 构建验证 + 在线 demo 部署
 - [ ] SIMD 优化扩展 (其他热点 DSP 路径)

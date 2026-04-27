@@ -6,7 +6,9 @@ use thiserror::Error;
 use tracing::{error, info, instrument};
 
 pub mod effects;
+pub mod stream;
 pub use effects::*;
+pub use stream::{convert_for_device, play_stream};
 
 #[derive(Error, Debug)]
 pub enum EngineError {
