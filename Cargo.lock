@@ -4185,6 +4185,7 @@ dependencies = [
  "phonon-video",
  "phonon-wav",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4270,6 +4271,10 @@ name = "phonon-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
+ "bytes",
+ "hound",
+ "http-body-util",
  "phonon-ai",
  "phonon-core",
  "phonon-io",
