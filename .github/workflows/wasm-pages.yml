@@ -1,0 +1,43 @@
+name: wasm-pages
+
+# Manual deploy only — keeps the wasm bundle off the live site unless
+# explicitly triggered. Build verification still runs as part of the
+# main `build` workflow on every push.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked --version "^0.13"
+      - uses: Swatinem/rust-cache@v2
+      - name: Build wasm bundle
+        run: ./phonon-wasm/build.sh
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: phonon-wasm/www
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

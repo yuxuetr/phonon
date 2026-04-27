@@ -84,7 +84,7 @@
 
 - [x] 流式 TTS (边合成边播放) — phonon-engine `stream::play_stream` + `convert_for_device`,串接 `TtsProvider::synthesize_streaming` ✅
 - [x] AudioEffect / DspPlugin 架构统一 (phonon-engine 适配 phonon-core plugin) — 内置 effects 改为 DspPlugin 薄封装并 `#[deprecated]`,新增 `EffectAsPlugin` 反向适配器,README 改为推荐 `add_plugin` 路径 ✅
-- [ ] wasm-pack 构建验证 + 在线 demo 部署
+- [x] wasm-pack 构建验证 + 在线 demo 部署 — `phonon-wasm/build.sh` + README,CI `build-wasm` job 自动跑 wasm-pack,`.github/workflows/wasm-pages.yml` 手动触发部署到 GitHub Pages ✅
 - [ ] SIMD 优化扩展 (其他热点 DSP 路径)
 - [ ] 发布到 crates.io
 - [ ] VST3 / CLAP 插件兼容层
