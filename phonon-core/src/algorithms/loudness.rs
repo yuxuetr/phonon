@@ -36,32 +36,34 @@ pub fn rms(buffer: &AudioBuffer) -> f32 {
     return 0.0;
   }
 
-  let sum_squares: f64 = {
-    #[cfg(feature = "parallel")]
-    if buffer.samples.len() >= PAR_THRESHOLD {
-      buffer
-        .samples
-        .par_iter()
-        .map(|&s| (s as f64) * (s as f64))
-        .sum()
-    } else {
-      buffer
-        .samples
-        .iter()
-        .map(|&s| (s as f64) * (s as f64))
-        .sum()
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-      buffer
-        .samples
-        .iter()
-        .map(|&s| (s as f64) * (s as f64))
-        .sum()
-    }
-  };
-
+  let sum_squares: f64 = sum_squares_of(&buffer.samples);
   (sum_squares / buffer.samples.len() as f64).sqrt() as f32
+}
+
+/// Σ s² with SIMD acceleration when available, parallel rayon split for
+/// long buffers, and a scalar fallback otherwise.
+fn sum_squares_of(samples: &[f32]) -> f64 {
+  // Per-chunk reducer used by both the serial and parallel paths.
+  fn chunk_sum_sq(slice: &[f32]) -> f64 {
+    #[cfg(feature = "simd")]
+    {
+      crate::algorithms::simd_ops::simd_sum_sq(slice)
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+      slice.iter().map(|&s| (s as f64) * (s as f64)).sum()
+    }
+  }
+
+  #[cfg(feature = "parallel")]
+  if samples.len() >= PAR_THRESHOLD {
+    return samples
+      .par_chunks(PAR_THRESHOLD / 2)
+      .map(chunk_sum_sq)
+      .sum();
+  }
+
+  chunk_sum_sq(samples)
 }
 
 /// Computes the peak amplitude of the audio buffer.

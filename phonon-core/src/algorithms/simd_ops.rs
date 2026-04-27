@@ -240,6 +240,128 @@ pub(crate) fn simd_max_abs(samples: &[f32]) -> f32 {
   global_max
 }
 
+// ─── Sum of squares (f64 accumulator) ─────────────────────────────
+// Used by: loudness::rms, LUFS K-weighted block energy.
+
+/// Returns Σ (samples[i] as f64)².
+///
+/// Accumulates in `f64` for numerical stability across long buffers.
+pub(crate) fn simd_sum_sq(samples: &[f32]) -> f64 {
+  let len = samples.len();
+  let chunks = len / LANES;
+  let remainder = len % LANES;
+  // On aarch64/x86_64 the SIMD block sets this; on other arches it stays 0.0.
+  #[allow(unused_assignments)]
+  let mut sum: f64 = 0.0;
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    use std::arch::aarch64::*;
+    unsafe {
+      let mut acc = vdupq_n_f64(0.0);
+      let ptr = samples.as_ptr();
+      for i in 0..chunks {
+        let v = vld1q_f32(ptr.add(i * LANES));
+        // Promote each f32 lane to f64 for the multiply, accumulating
+        // separately on the low and high halves to keep precision.
+        let lo = vcvt_f64_f32(vget_low_f32(v));
+        let hi = vcvt_high_f64_f32(v);
+        acc = vfmaq_f64(acc, lo, lo);
+        acc = vfmaq_f64(acc, hi, hi);
+      }
+      sum = vaddvq_f64(acc);
+    }
+  }
+
+  #[cfg(target_arch = "x86_64")]
+  {
+    use std::arch::x86_64::*;
+    unsafe {
+      let mut acc = _mm_setzero_pd();
+      let ptr = samples.as_ptr();
+      for i in 0..chunks {
+        let v = _mm_loadu_ps(ptr.add(i * LANES));
+        let lo = _mm_cvtps_pd(v); // lanes 0,1 as f64
+        // Move lanes 2,3 to low half then convert.
+        let hi_ps = _mm_movehl_ps(v, v);
+        let hi = _mm_cvtps_pd(hi_ps); // lanes 2,3 as f64
+        acc = _mm_add_pd(acc, _mm_mul_pd(lo, lo));
+        acc = _mm_add_pd(acc, _mm_mul_pd(hi, hi));
+      }
+      // Horizontal add of the 2 f64 lanes.
+      let shuf = _mm_unpackhi_pd(acc, acc);
+      let total = _mm_add_pd(acc, shuf);
+      sum = _mm_cvtsd_f64(total);
+    }
+  }
+
+  #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+  let _ = chunks;
+
+  // Scalar remainder.
+  let start = len - remainder;
+  for &s in &samples[start..] {
+    sum += (s as f64) * (s as f64);
+  }
+
+  sum
+}
+
+// ─── Multiply interleaved pairs with two gains ────────────────────
+// Used by: stereo pan / per-channel gain on interleaved [L, R, L, R, …] data.
+
+/// Multiplies even-indexed samples by `g_even` and odd-indexed samples
+/// by `g_odd` in place.
+///
+/// For stereo data laid out as `[L0, R0, L1, R1, …]` this applies a
+/// constant per-channel gain pair (e.g. a pan position).
+pub(crate) fn simd_mul_interleaved_pair(samples: &mut [f32], g_even: f32, g_odd: f32) {
+  let len = samples.len();
+  let chunks = len / LANES;
+  let remainder = len % LANES;
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    use std::arch::aarch64::*;
+    unsafe {
+      let gains: [f32; 4] = [g_even, g_odd, g_even, g_odd];
+      let vgains = vld1q_f32(gains.as_ptr());
+      let ptr = samples.as_mut_ptr();
+      for i in 0..chunks {
+        let off = i * LANES;
+        let v = vld1q_f32(ptr.add(off));
+        vst1q_f32(ptr.add(off), vmulq_f32(v, vgains));
+      }
+    }
+  }
+
+  #[cfg(target_arch = "x86_64")]
+  {
+    use std::arch::x86_64::*;
+    unsafe {
+      // Note: _mm_set_ps takes lanes in reverse order.
+      let vgains = _mm_set_ps(g_odd, g_even, g_odd, g_even);
+      let ptr = samples.as_mut_ptr();
+      for i in 0..chunks {
+        let off = i * LANES;
+        let v = _mm_loadu_ps(ptr.add(off));
+        _mm_storeu_ps(ptr.add(off), _mm_mul_ps(v, vgains));
+      }
+    }
+  }
+
+  #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+  let _ = chunks;
+
+  // Scalar remainder — preserve correct even/odd assignment given the
+  // chunk loop processed `chunks * LANES` samples (LANES is even, so
+  // parity is preserved).
+  let start = len - remainder;
+  for (i, s) in samples[start..].iter_mut().enumerate() {
+    *s *= if (start + i) % 2 == 0 { g_even } else { g_odd };
+  }
+}
+
 // ─── Multiply by linear ramp ──────────────────────────────────────
 // Used by: fade_in, fade_out
 
@@ -496,5 +618,97 @@ mod tests {
     let simd_res = simd_max_abs(&samples);
     let ref_res = ref_max_abs(&samples);
     assert!((simd_res - ref_res).abs() < 1e-5);
+  }
+
+  // ── simd_sum_sq ──
+
+  fn ref_sum_sq(samples: &[f32]) -> f64 {
+    samples.iter().map(|&s| (s as f64) * (s as f64)).sum()
+  }
+
+  #[test]
+  fn test_sum_sq_aligned() {
+    let s = vec![0.3, -0.5, 0.8, -0.9, 0.1, 0.6, -0.2, 0.4];
+    let simd_res = simd_sum_sq(&s);
+    let ref_res = ref_sum_sq(&s);
+    assert!((simd_res - ref_res).abs() < 1e-9);
+  }
+
+  #[test]
+  fn test_sum_sq_unaligned() {
+    let s = vec![0.5, -0.5, 1.0, -1.0, 0.25];
+    let simd_res = simd_sum_sq(&s);
+    let ref_res = ref_sum_sq(&s);
+    assert!((simd_res - ref_res).abs() < 1e-9);
+  }
+
+  #[test]
+  fn test_sum_sq_empty() {
+    assert_eq!(simd_sum_sq(&[]), 0.0);
+  }
+
+  #[test]
+  fn test_sum_sq_known_values() {
+    // 1²+2²+3²+4² = 30
+    let s = vec![1.0, 2.0, 3.0, 4.0];
+    assert!((simd_sum_sq(&s) - 30.0).abs() < 1e-9);
+  }
+
+  #[test]
+  fn test_sum_sq_large_buffer() {
+    let n = 100_003;
+    let s: Vec<f32> = (0..n).map(|i| (i as f32 / n as f32) - 0.5).collect();
+    let simd_res = simd_sum_sq(&s);
+    let ref_res = ref_sum_sq(&s);
+    // Allow a small relative tolerance for SIMD vs naive accumulation order.
+    let tol = ref_res.abs() * 1e-7 + 1e-7;
+    assert!(
+      (simd_res - ref_res).abs() < tol,
+      "simd={simd_res}, ref={ref_res}"
+    );
+  }
+
+  // ── simd_mul_interleaved_pair ──
+
+  fn ref_mul_interleaved_pair(samples: &mut [f32], g_even: f32, g_odd: f32) {
+    for (i, s) in samples.iter_mut().enumerate() {
+      *s *= if i % 2 == 0 { g_even } else { g_odd };
+    }
+  }
+
+  #[test]
+  fn test_mul_interleaved_pair_aligned() {
+    let mut simd_buf = vec![1.0, 1.0, 0.5, -0.5, 0.25, 0.25, -1.0, 1.0];
+    let mut ref_buf = simd_buf.clone();
+    simd_mul_interleaved_pair(&mut simd_buf, 0.7, 0.3);
+    ref_mul_interleaved_pair(&mut ref_buf, 0.7, 0.3);
+    assert!(approx_eq(&simd_buf, &ref_buf, 1e-6));
+  }
+
+  #[test]
+  fn test_mul_interleaved_pair_unaligned() {
+    let mut simd_buf = vec![1.0, 1.0, 0.5, -0.5, 0.2];
+    let mut ref_buf = simd_buf.clone();
+    simd_mul_interleaved_pair(&mut simd_buf, 0.6, 0.4);
+    ref_mul_interleaved_pair(&mut ref_buf, 0.6, 0.4);
+    assert!(approx_eq(&simd_buf, &ref_buf, 1e-6));
+  }
+
+  #[test]
+  fn test_mul_interleaved_pair_full_pan() {
+    // g_even=1, g_odd=0 zeros the right channel of [L,R,L,R].
+    let mut buf = vec![1.0, 1.0, 0.5, 0.5];
+    simd_mul_interleaved_pair(&mut buf, 1.0, 0.0);
+    assert_eq!(buf, vec![1.0, 0.0, 0.5, 0.0]);
+  }
+
+  #[test]
+  fn test_mul_interleaved_pair_large_buffer() {
+    let n = 100_003;
+    let mut simd_buf: Vec<f32> = (0..n).map(|i| (i as f32) * 0.001 - 0.5).collect();
+    let mut ref_buf = simd_buf.clone();
+    simd_mul_interleaved_pair(&mut simd_buf, 0.5, 1.5);
+    ref_mul_interleaved_pair(&mut ref_buf, 0.5, 1.5);
+    assert!(approx_eq(&simd_buf, &ref_buf, 1e-5));
   }
 }

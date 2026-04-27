@@ -36,11 +36,15 @@ pub fn pan_mono_to_stereo(buffer: &AudioBuffer, position: f32) -> Result<AudioBu
     });
   }
   let (gl, gr) = constant_power_gains(position);
-  let mut out = Vec::with_capacity(buffer.samples.len() * 2);
-  for &s in &buffer.samples {
-    out.push(s * gl);
-    out.push(s * gr);
+  let n = buffer.samples.len();
+  let mut out = vec![0.0_f32; n * 2];
+  // Interleave the mono signal into both channels…
+  for (i, &s) in buffer.samples.iter().enumerate() {
+    out[i * 2] = s;
+    out[i * 2 + 1] = s;
   }
+  // …then apply per-channel gain via SIMD when available.
+  apply_pair_gains(&mut out, gl, gr);
   Ok(AudioBuffer {
     samples: out,
     sample_rate: buffer.sample_rate,
@@ -60,12 +64,30 @@ pub fn pan_stereo_in_place(buffer: &mut AudioBuffer, position: f32) -> Result<()
     });
   }
   let (gl, gr) = constant_power_gains(position);
+  // Step 1: collapse each frame to mid = (L+R)*0.5. Done as a scalar
+  // pass — pairwise add isn't a clean fit for our 4-wide kernels.
   for frame in buffer.samples.chunks_exact_mut(2) {
     let mid = (frame[0] + frame[1]) * 0.5;
-    frame[0] = mid * gl;
-    frame[1] = mid * gr;
+    frame[0] = mid;
+    frame[1] = mid;
   }
+  // Step 2: apply per-channel gains via SIMD interleaved-pair multiply.
+  apply_pair_gains(&mut buffer.samples, gl, gr);
   Ok(())
+}
+
+/// Multiply even/odd interleaved samples by `(g_even, g_odd)`.
+fn apply_pair_gains(samples: &mut [f32], g_even: f32, g_odd: f32) {
+  #[cfg(feature = "simd")]
+  {
+    crate::algorithms::simd_ops::simd_mul_interleaved_pair(samples, g_even, g_odd);
+  }
+  #[cfg(not(feature = "simd"))]
+  {
+    for (i, s) in samples.iter_mut().enumerate() {
+      *s *= if i % 2 == 0 { g_even } else { g_odd };
+    }
+  }
 }
 
 /// Immutable variant of [`pan_stereo_in_place`].
