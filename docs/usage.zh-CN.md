@@ -8,11 +8,13 @@
 | [A. CLI 速查](#a-cli-速查) | 命令行工具 |
 | [B. DSP 流水线（Rust）](#b-dsp-流水线rust) | 库 / 底层 DSP |
 | [C. 播客管线（Rust）](#c-播客管线rust) | 库 / 一键出播客 |
-| [D. 实时播放 + EQ](#d-实时播放--eq) | 库 / 播放引擎 |
+| [D. 实时播放 + 插件链](#d-实时播放--插件链) | 库 / 播放引擎 |
 | [E. REST 服务](#e-rest-服务) | HTTP 服务 |
 | [F. MCP 服务](#f-mcp-服务) | LLM Agent 的工具后端 |
 | [G. WebAssembly](#g-webassembly) | 浏览器内 DSP |
 | [H. 一句话速查表](#h-一句话速查表) | 备忘录 |
+| [I. 流式 TTS 播放](#i-流式-tts-播放) | 边合成边播 |
+| [J. 插件出口（CLAP / VST3）](#j-插件出口clap--vst3) | 给 DAW 的可加载插件 |
 
 ---
 
@@ -213,22 +215,34 @@ async fn main() -> anyhow::Result<()> {
 
 ---
 
-## D. 实时播放 + EQ
+## D. 实时播放 + 插件链
+
+`AudioPlayer` 的效果链已经和 [`phonon_core::DspPlugin`] 完全统一 ——
+和 CLI / MCP / `phonon-plugin` 的 CLAP/VST3 出口走同一套 trait。新代码
+统一用 `add_plugin`(`add_effect` 自 v0.7.0 起 `#[deprecated]`,但兼容)。
 
 ```rust
-use phonon_core::{ParametricEqPlugin, EqBand, FilterType};
+use phonon_core::{
+  CompressorPlugin, HighPassPlugin, LowPassPlugin, ParametricEqPlugin, DspPlugin,
+};
 use phonon_engine::AudioPlayer;
 use phonon_io::read_audio;
 
-fn play_with_eq() -> anyhow::Result<()> {
+fn play_with_chain() -> anyhow::Result<()> {
   let buf = read_audio("song.wav")?;
   let player = AudioPlayer::new()?;     // 默认输出设备
 
-  // 给播放链挂两段 EQ
-  player.add_plugin(Box::new(ParametricEqPlugin::with_bands(vec![
-    EqBand { filter_type: FilterType::HighShelf, freq_hz: 8000.0, q: 0.7, gain_db: 3.0 },
-    EqBand { filter_type: FilterType::Peaking,   freq_hz: 200.0,  q: 1.0, gain_db: -2.0 },
-  ])));
+  // 两道滤波 + 一道压缩
+  player.add_plugin(Box::new(HighPassPlugin::new(80.0)));
+  player.add_plugin(Box::new(LowPassPlugin::new(15_000.0)));
+  player.add_plugin(Box::new(CompressorPlugin::default()));
+
+  // 5 段固定中心频率 (80 / 250 / 1k / 4k / 12k Hz) 的参数化 EQ,
+  // 通过 `band_N_gain` 调每段。
+  let mut eq = ParametricEqPlugin::new();
+  eq.set_parameter("band_0_gain", -2.0)?;  // 80 Hz: 稍切
+  eq.set_parameter("band_4_gain",  3.0)?;  // 12 kHz: 抬一点
+  player.add_plugin(Box::new(eq));
 
   player.play(&buf)?;
   player.set_volume(0.8);
@@ -237,15 +251,19 @@ fn play_with_eq() -> anyhow::Result<()> {
 }
 ```
 
-流式播放（边合成边播）：
+要任意指定多段、自由参数的 peaking EQ,可以走离线辅助函数:
 
 ```rust
-let player = AudioPlayer::new()?;
-while let Some(chunk) = next_chunk().await? {
-  player.append_samples(&chunk)?;       // 第一次调用会自动 active
-}
-player.finish_streaming();              // 播完缓冲后自动停
+use phonon_core::{EqBand, FilterType, apply_eq};
+
+let mut buf = read_audio("song.wav")?;
+apply_eq(&mut buf, &[
+  EqBand { filter_type: FilterType::HighShelf, freq_hz: 8000.0, q: 0.7, gain_db: 3.0 },
+  EqBand { filter_type: FilterType::Peaking,   freq_hz: 200.0,  q: 1.0, gain_db: -2.0 },
+]);
 ```
+
+"边产生音频边播放"的完整流程见 [§I — 流式 TTS 播放](#i-流式-tts-播放)。
 
 ---
 
@@ -324,6 +342,10 @@ phonon-mcp
 设计要点：音频缓冲只以 `AudioHandle = UUID` 形式跨 JSON-RPC，
 **PCM 数据从不出现在 wire 上**。
 
+完整的 input/output schema、错误模型、单工具示例:
+[`docs/mcp-tools.md`](./mcp-tools.md)。crate 级安装 / 客户端配置:
+[`phonon-mcp/README.md`](../phonon-mcp/README.md)。
+
 ---
 
 ## G. WebAssembly
@@ -374,6 +396,104 @@ const out = process_audio(samples, sampleRate, channels, ops);
 | Tagged OGG | `phonon_io::write_ogg_tagged(p, &buf, &cfg, &tags)` |
 | 播客脚本 → audio + chapters + SRT | `pipeline.generate_episode(&script).await` |
 | 实时播放 | `AudioPlayer::new()?.play(&buf)?` |
+
+---
+
+## I. 流式 TTS 播放
+
+`phonon-engine` 提供一个一行调用的辅助:把一串 TTS 分块(24 kHz / 48 kHz、
+单声道/立体声)接到设备的实际输出格式上,首块到达即开播。
+
+```rust
+use phonon_ai::{OpenAiTts, TtsProvider, VoiceConfig};
+use phonon_core::AudioBuffer;
+use phonon_engine::{AudioPlayer, stream::play_stream};
+use tokio::sync::mpsc;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+  let player = AudioPlayer::new()?;            // 默认输出设备
+  let (tx, rx) = mpsc::channel::<AudioBuffer>(8);
+
+  // 1. 启动合成任务。
+  tokio::spawn(async move {
+    let tts = OpenAiTts::new()?;                // OPENAI_API_KEY
+    let voice = VoiceConfig::new("alloy").with_model("tts-1");
+
+    // OpenAi / ElevenLabs 重写了 `synthesize_streaming` 走真正的 PCM 流;
+    // 分块以 `Result<AudioBuffer, _>` 形式发出。
+    let (raw_tx, mut raw_rx) =
+      mpsc::channel::<Result<AudioBuffer, phonon_ai::AiError>>(8);
+    tokio::spawn(async move {
+      let _ = tts.synthesize_streaming(
+        "你好,这是一段流式 TTS 演示,合成过程边产生边播放。",
+        &voice, raw_tx).await;
+    });
+    while let Some(item) = raw_rx.recv().await {
+      if let Ok(chunk) = item { let _ = tx.send(chunk).await; }
+    }
+    Ok::<_, phonon_ai::AiError>(())
+  });
+
+  // 2. 用 chunk 流驱动播放器。
+  //    `play_stream` 会按设备格式做重采样 / 通道转换,
+  //    sender drop 时自动停。
+  play_stream(&player, rx).await?;
+  Ok(())
+}
+```
+
+更细粒度的积木:
+
+* `phonon_engine::convert_for_device(&buffer, sr, ch)` —— 纯函数,
+  把任意分块转成可直接喂 `AudioPlayer::append_samples` 的 samples。
+* `AudioPlayer::append_samples(&samples)` / `finish_streaming()` ——
+  底层队列 API,首次 push 自动激活播放器。
+
+Edge TTS 没有重写 `synthesize_streaming`(SDK 是同步 WebSocket),会走
+trait 默认值——整段合成完毕后一次性返回单块。这种情况直接用 `synthesize`
++ `play` 即可。
+
+---
+
+## J. 插件出口（CLAP / VST3）
+
+`phonon-plugin` 是把 Phonon 内置
+[`DspPlugin`](https://docs.rs/phonon-core/latest/phonon_core/trait.DspPlugin.html)
+导出成 DAW 可加载 CLAP / VST3 插件的桥。Rust 侧的桥
+(`PluginManifest`、`PluginExport`、`ExportedPlugin`)已经接好并测过;
+`.clap` / `.vst3` 二进制本体的 FFI 通过 cargo feature 隔离,默认不拉
+host SDK,workspace 在没装 SDK 的机器上也能 build。
+
+```rust
+use phonon_plugin::{ExportedPlugin, PluginExport, manifest_from_plugin};
+use phonon_core::{DspPlugin, VolumePlugin};
+
+let plug: Box<dyn DspPlugin> = Box::new(VolumePlugin::new(0.8));
+
+// 1. 给 host 看的纯描述符(id / name / vendor / version / params)。
+let manifest = manifest_from_plugin(plug.as_ref(), "Phonon", "线性增益");
+assert_eq!(manifest.name, "Volume");
+assert_eq!(manifest.params[0].id, "gain");
+
+// 2. FFI 工厂会交给 host 的封装实例。
+let mut export = ExportedPlugin::new(plug, "Phonon", "线性增益");
+export.set_param("gain", 0.5);
+
+let mut samples = vec![1.0, -1.0];
+export.process(&mut samples, 48_000, 1);   // host 的 audio callback 里调
+```
+
+构建状态:
+
+| 目标 | 依赖 | 现状 |
+|---|---|---|
+| CLAP | `clap-sys = "0.5"`(crates.io) | 工厂骨架就位;FFI 由 `--features clap` 控制。 |
+| VST3 | `vst3-sys`(git only / Steinberg SDK) | 工厂骨架 + 16-byte class id 派生就位;FFI 由 `--features vst3` 控制。 |
+
+各平台的构建命令和安装路径见
+[`phonon-plugin/README.md`](../phonon-plugin/README.md)。两种格式共用同一套
+`PluginExport` 桥,音频 / 参数逻辑全部留在 `phonon-core`,无需移植。
 
 ---
 

@@ -10,6 +10,7 @@ authors.workspace = true
 description = "MCP (Model Context Protocol) server exposing Phonon audio capabilities to LLM agents"
 keywords = ["mcp", "audio", "llm", "phonon"]
 categories = ["multimedia::audio", "command-line-utilities"]
+readme = "README.md"
 
 [dependencies]
 phonon-core.workspace = true

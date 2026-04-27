@@ -105,6 +105,9 @@ cargo run -p phonon-mcp --bin phonon-mcp
 # or wire it into your MCP client config as the launch command
 ```
 
+Crate-level install + Claude Desktop config: [`phonon-mcp/README.md`](./phonon-mcp/README.md).
+Full per-tool input/output schema: [`docs/mcp-tools.md`](./docs/mcp-tools.md).
+
 ### WebAssembly (phonon-wasm)
 - All phonon-core algorithms available in the browser
 - `process_audio()` — chain operations via JSON config

@@ -12,11 +12,13 @@ matches your situation.
 | [A. CLI cheatsheet](#a-cli-cheatsheet) | command-line tool |
 | [B. DSP pipeline (Rust)](#b-dsp-pipeline-rust) | library, low-level DSP |
 | [C. Podcast pipeline (Rust)](#c-podcast-pipeline-rust) | library, podcast generation |
-| [D. Real-time playback + EQ](#d-real-time-playback--eq) | library, playback engine |
+| [D. Real-time playback + plugin chain](#d-real-time-playback--plugin-chain) | library, playback engine |
 | [E. REST server](#e-rest-server) | HTTP service |
 | [F. MCP server](#f-mcp-server) | tool backend for an LLM agent |
 | [G. WebAssembly](#g-webassembly) | in-browser DSP |
 | [H. One-liner cookbook](#h-one-liner-cookbook) | quick reference |
+| [I. Streaming TTS playback](#i-streaming-tts-playback) | live "synthesize-and-play" |
+| [J. Plugin export (CLAP / VST3)](#j-plugin-export-clap--vst3) | DAW-loadable plugins |
 
 ---
 
@@ -216,22 +218,36 @@ Sample script (`ep01.json`):
 
 ---
 
-## D. Real-time playback + EQ
+## D. Real-time playback + plugin chain
+
+`AudioPlayer` runs an effect chain unified with the
+[`phonon_core::DspPlugin`] trait — the same plugins you can drive from
+CLI, MCP, or `phonon-plugin`'s CLAP/VST3 export. Use `add_plugin` for
+all new code (`add_effect` still works but is deprecated since v0.7.0).
 
 ```rust
-use phonon_core::{ParametricEqPlugin, EqBand, FilterType};
+use phonon_core::{
+  CompressorPlugin, HighPassPlugin, LowPassPlugin, ParametricEqPlugin,
+};
 use phonon_engine::AudioPlayer;
 use phonon_io::read_audio;
 
-fn play_with_eq() -> anyhow::Result<()> {
+fn play_with_chain() -> anyhow::Result<()> {
   let buf = read_audio("song.wav")?;
   let player = AudioPlayer::new()?;     // default output device
 
-  // Two-band parametric EQ on the playback chain.
-  player.add_plugin(Box::new(ParametricEqPlugin::with_bands(vec![
-    EqBand { filter_type: FilterType::HighShelf, freq_hz: 8000.0, q: 0.7, gain_db: 3.0 },
-    EqBand { filter_type: FilterType::Peaking,   freq_hz: 200.0,  q: 1.0, gain_db: -2.0 },
-  ])));
+  // Two filters and a compressor on the live output.
+  player.add_plugin(Box::new(HighPassPlugin::new(80.0)));
+  player.add_plugin(Box::new(LowPassPlugin::new(15_000.0)));
+  player.add_plugin(Box::new(CompressorPlugin::default()));
+
+  // 5-band parametric EQ — bands are at fixed centres
+  // (80 / 250 / 1k / 4k / 12k Hz). Adjust each band's gain by name.
+  let mut eq = ParametricEqPlugin::new();
+  use phonon_core::DspPlugin;
+  eq.set_parameter("band_0_gain", -2.0)?;  // 80 Hz: cut a bit
+  eq.set_parameter("band_4_gain",  3.0)?;  // 12 kHz: shelf up
+  player.add_plugin(Box::new(eq));
 
   player.play(&buf)?;
   player.set_volume(0.8);
@@ -240,15 +256,22 @@ fn play_with_eq() -> anyhow::Result<()> {
 }
 ```
 
-Streaming mode (start playing while TTS is still generating chunks):
+For an arbitrary multi-band, fully-parameterised peaking EQ you don't
+need `ParametricEqPlugin`'s 5-band fixed lattice — call the offline
+helper instead:
 
 ```rust
-let player = AudioPlayer::new()?;
-while let Some(chunk) = next_chunk().await? {
-  player.append_samples(&chunk)?;       // auto-activates the player
-}
-player.finish_streaming();              // auto-stop when buffer drains
+use phonon_core::{EqBand, FilterType, apply_eq};
+
+let mut buf = read_audio("song.wav")?;
+apply_eq(&mut buf, &[
+  EqBand { filter_type: FilterType::HighShelf, freq_hz: 8000.0, q: 0.7, gain_db: 3.0 },
+  EqBand { filter_type: FilterType::Peaking,   freq_hz: 200.0,  q: 1.0, gain_db: -2.0 },
+]);
 ```
+
+For *live* "start playing while audio is still being produced" see
+[§I — Streaming TTS playback](#i-streaming-tts-playback).
 
 ---
 
@@ -327,6 +350,10 @@ Built-in tools (14):
 Audio buffers cross the JSON-RPC boundary as `AudioHandle = UUID` references
 into an in-memory registry. **PCM data never travels on the wire.**
 
+Full input/output schema, error model, and per-tool examples:
+[`docs/mcp-tools.md`](./mcp-tools.md). Crate-level install /
+configuration: [`phonon-mcp/README.md`](../phonon-mcp/README.md).
+
 ---
 
 ## G. WebAssembly
@@ -377,6 +404,111 @@ shows full drag-and-drop + WebAudio playback.
 | Tagged OGG | `phonon_io::write_ogg_tagged(p, &buf, &cfg, &tags)` |
 | Full podcast → audio + chapters + SRT | `pipeline.generate_episode(&script).await` |
 | Real-time playback | `AudioPlayer::new()?.play(&buf)?` |
+
+---
+
+## I. Streaming TTS playback
+
+`phonon-engine` ships a one-call helper that pipes a stream of TTS
+chunks (24 kHz / 48 kHz, mono or stereo) into the device's actual
+output format and starts playing as soon as the first chunk arrives.
+
+```rust
+use phonon_ai::{OpenAiTts, TtsProvider, VoiceConfig};
+use phonon_core::AudioBuffer;
+use phonon_engine::{AudioPlayer, stream::play_stream};
+use tokio::sync::mpsc;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+  let player = AudioPlayer::new()?;         // default output device
+  let (tx, rx) = mpsc::channel::<AudioBuffer>(8);
+
+  // 1. Spawn the synthesis task.
+  tokio::spawn(async move {
+    let tts = OpenAiTts::new()?;             // OPENAI_API_KEY
+    let voice = VoiceConfig::new("alloy").with_model("tts-1");
+
+    // OpenAi/ElevenLabs override `synthesize_streaming` with true PCM
+    // streaming; chunks are forwarded as `Result<AudioBuffer, _>`.
+    let (raw_tx, mut raw_rx) =
+      mpsc::channel::<Result<AudioBuffer, phonon_ai::AiError>>(8);
+    tokio::spawn(async move {
+      let _ = tts.synthesize_streaming(
+        "Hello from streaming TTS. We are speaking the second \
+         this sentence is being generated.",
+        &voice, raw_tx).await;
+    });
+    while let Some(item) = raw_rx.recv().await {
+      if let Ok(chunk) = item { let _ = tx.send(chunk).await; }
+    }
+    Ok::<_, phonon_ai::AiError>(())
+  });
+
+  // 2. Drive the player from the chunk stream.
+  //    `play_stream` resamples + re-channels each chunk to match the
+  //    device, then auto-stops when the sender is dropped.
+  play_stream(&player, rx).await?;
+  Ok(())
+}
+```
+
+Building blocks if you want finer control:
+
+* `phonon_engine::convert_for_device(&buffer, sr, ch)` — pure helper
+  that returns the resampled / re-channeled samples ready to feed
+  `AudioPlayer::append_samples`.
+* `AudioPlayer::append_samples(&samples)` / `finish_streaming()` —
+  the underlying queue API; auto-activates the player on first push.
+
+Edge TTS doesn't override `synthesize_streaming` (its WebSocket-only
+SDK is sync), so it falls back to the trait default — a single chunk
+arrives once synthesis finishes. Drop the streaming code in this case
+and call `synthesize` + `play` instead.
+
+---
+
+## J. Plugin export (CLAP / VST3)
+
+`phonon-plugin` is the bridge that exposes Phonon's built-in
+[`DspPlugin`](https://docs.rs/phonon-core/latest/phonon_core/trait.DspPlugin.html)s
+as DAW-loadable CLAP / VST3 plugins. The Rust-side plumbing
+(`PluginManifest`, `PluginExport`, `ExportedPlugin`) is fully wired
+and tested today. The actual `.clap` / `.vst3` binary emission is
+behind cargo features so the workspace stays buildable without the
+host SDKs.
+
+```rust
+use phonon_plugin::{ExportedPlugin, PluginExport, manifest_from_plugin};
+use phonon_core::{DspPlugin, VolumePlugin};
+
+let plug: Box<dyn DspPlugin> = Box::new(VolumePlugin::new(0.8));
+
+// 1. Pure descriptor for hosts (id / name / vendor / version / params).
+let manifest = manifest_from_plugin(plug.as_ref(), "Phonon", "Linear gain");
+assert_eq!(manifest.name, "Volume");
+assert_eq!(manifest.params[0].id, "gain");
+
+// 2. Wrapped instance the FFI factories will hand to the host.
+let mut export = ExportedPlugin::new(plug, "Phonon", "Linear gain");
+export.set_param("gain", 0.5);
+
+let mut samples = vec![1.0, -1.0];
+export.process(&mut samples, 48_000, 1);   // host's audio callback
+```
+
+Build status:
+
+| Target | Crate dep | Status |
+|---|---|---|
+| CLAP   | `clap-sys = "0.5"` (crates.io) | factory scaffold; FFI gated behind `--features clap`. |
+| VST3   | `vst3-sys` (git-only / Steinberg SDK) | factory scaffold + 16-byte class-id derivation; FFI gated behind `--features vst3`. |
+
+The build commands and install paths for each platform are in
+[`phonon-plugin/README.md`](../phonon-plugin/README.md). Once the
+feature flags wire in the SDK, the same `PluginExport` plumbing
+above feeds both formats — the audio / parameter logic stays in
+`phonon-core` and never has to be ported.
 
 ---
 
