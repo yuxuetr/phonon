@@ -87,4 +87,4 @@
 - [x] wasm-pack 构建验证 + 在线 demo 部署 — `phonon-wasm/build.sh` + README,CI `build-wasm` job 自动跑 wasm-pack,`.github/workflows/wasm-pages.yml` 手动触发部署到 GitHub Pages ✅
 - [x] SIMD 优化扩展 (其他热点 DSP 路径) — 新增 `simd_sum_sq` (loudness::rms / LUFS K-weighted) 与 `simd_mul_interleaved_pair` (pan_mono_to_stereo / pan_stereo_in_place),NEON + SSE2 + 标量 fallback,9 个新 SIMD vs 标量等价性测试 ✅
 - [x] 发布到 crates.io — workspace version 0.1.0 → 0.7.0,补全各 crate description/keywords/categories/authors,新增 `scripts/publish-crates.sh` (按依赖顺序 dry-run/--execute) 与 `docs/publishing.md`,`cargo publish -p phonon-core --dry-run` 通过 ✅
-- [ ] VST3 / CLAP 插件兼容层
+- [x] VST3 / CLAP 插件兼容层 — 新增 `phonon-plugin` crate (`publish=false`),`PluginManifest` / `ParamInfo` / `PluginExport` / `ExportedPlugin` 把任何 `DspPlugin` 转成 host-friendly 描述符,`clap`/`vst3` 模块按 feature gate 提供工厂入口骨架,README 记录 SDK 选型与后续接入步骤。10 个测试全过 ✅

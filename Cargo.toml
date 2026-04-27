@@ -8,6 +8,7 @@ members = ["phonon-cli","phonon-core", "phonon-engine",
     "phonon-tests",
     "phonon-wasm",
     "phonon-mcp",
+    "phonon-plugin",
 ]
 resolver = "2"
 
