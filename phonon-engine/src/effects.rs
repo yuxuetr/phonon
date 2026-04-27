@@ -1,7 +1,24 @@
 //! Real-time audio effect processing.
 //!
-//! Provides an `AudioEffect` trait and built-in effects that can be chained
-//! together in an `EffectChain` and applied during playback.
+//! Provides an [`AudioEffect`] trait, an [`EffectChain`] runtime, and two
+//! adapters that bridge it to [`phonon_core::DspPlugin`]:
+//!
+//! * [`PluginAdapter`] — a `DspPlugin` used as an `AudioEffect`. The
+//!   preferred path: build effects from the core plugin registry
+//!   ([`phonon_core::PluginRegistry`]) and push them via
+//!   [`AudioPlayer::add_plugin`](crate::AudioPlayer::add_plugin).
+//! * [`EffectAsPlugin`] — an `AudioEffect` exposed as a parameter-less
+//!   `DspPlugin`, useful when you need to put a real-time-only effect
+//!   into a plugin-shaped slot (e.g. saved-chain serialization).
+//!
+//! The legacy in-engine effect types (`VolumeEffect`, `LowPassEffect`,
+//! `HighPassEffect`, `CompressorEffect`, `ParametricEqEffect`) remain
+//! as deprecated thin wrappers around the equivalent core plugins so
+//! existing call sites still compile while users migrate.
+
+use phonon_core::{
+  CompressorPlugin, DspPlugin, EqBand, HighPassPlugin, LowPassPlugin, ParametricEq, VolumePlugin,
+};
 
 /// A real-time audio effect that processes samples in-place.
 pub trait AudioEffect: Send + Sync {
@@ -31,7 +48,7 @@ impl EffectChain {
   }
 
   /// Adds a [`phonon_core::DspPlugin`] to the chain via [`PluginAdapter`].
-  pub fn push_plugin(&mut self, plugin: Box<dyn phonon_core::DspPlugin>) {
+  pub fn push_plugin(&mut self, plugin: Box<dyn DspPlugin>) {
     self.effects.push(Box::new(PluginAdapter::new(plugin)));
   }
 
@@ -64,18 +81,23 @@ impl Default for EffectChain {
   }
 }
 
-// ─── DspPlugin adapter ──────────────────────────────────────────────────────
+// ─── DspPlugin → AudioEffect adapter ────────────────────────────────
 
 /// Adapter that wraps a [`phonon_core::DspPlugin`] as an [`AudioEffect`],
 /// allowing any plugin from phonon-core to be used in an [`EffectChain`].
 pub struct PluginAdapter {
-  inner: Box<dyn phonon_core::DspPlugin>,
+  inner: Box<dyn DspPlugin>,
 }
 
 impl PluginAdapter {
   /// Wraps a `DspPlugin` so it can be used as an `AudioEffect`.
-  pub fn new(plugin: Box<dyn phonon_core::DspPlugin>) -> Self {
+  pub fn new(plugin: Box<dyn DspPlugin>) -> Self {
     Self { inner: plugin }
+  }
+
+  /// Returns a mutable reference to the inner plugin (for parameter tweaks).
+  pub fn plugin_mut(&mut self) -> &mut dyn DspPlugin {
+    self.inner.as_mut()
   }
 }
 
@@ -89,153 +111,194 @@ impl AudioEffect for PluginAdapter {
   }
 }
 
-// ─── Built-in Effects ────────────────────────────────────────────────────────
+// ─── AudioEffect → DspPlugin adapter ────────────────────────────────
 
-/// Volume adjustment effect.
-#[derive(Debug)]
-pub struct VolumeEffect {
-  /// Gain multiplier (0.0 = mute, 1.0 = unity, >1.0 = boost).
-  pub gain: f32,
+/// Adapter that exposes an [`AudioEffect`] as a parameter-less
+/// [`DspPlugin`].
+///
+/// The plugin's `id` and `name` are taken from the wrapped effect's
+/// `name()`. The parameter list is empty; `set_parameter` always errors.
+pub struct EffectAsPlugin {
+  inner: Box<dyn AudioEffect>,
+  id: String,
 }
 
-impl VolumeEffect {
-  pub fn new(gain: f32) -> Self {
-    Self { gain }
-  }
-}
-
-impl AudioEffect for VolumeEffect {
-  fn process(&mut self, samples: &mut [f32], _sample_rate: u32, _channels: u16) {
-    for s in samples.iter_mut() {
-      *s *= self.gain;
+impl EffectAsPlugin {
+  /// Wraps an `AudioEffect` and assigns it the given plugin id (e.g.
+  /// `"custom.fuzz"`). The plugin's display name comes from the
+  /// effect's [`AudioEffect::name`].
+  pub fn new(effect: Box<dyn AudioEffect>, id: impl Into<String>) -> Self {
+    Self {
+      inner: effect,
+      id: id.into(),
     }
   }
+}
 
+impl DspPlugin for EffectAsPlugin {
+  fn id(&self) -> &str {
+    &self.id
+  }
+  fn name(&self) -> &str {
+    self.inner.name()
+  }
+  fn parameters(&self) -> Vec<phonon_core::PluginParam> {
+    Vec::new()
+  }
+  fn set_parameter(&mut self, name: &str, _value: f32) -> phonon_core::Result<()> {
+    Err(phonon_core::PhononError::InvalidParam(format!(
+      "{}: no adjustable parameters",
+      name
+    )))
+  }
+  fn get_parameter(&self, _name: &str) -> Option<f32> {
+    None
+  }
+  fn process(&mut self, samples: &mut [f32], sample_rate: u32, channels: u16) {
+    self.inner.process(samples, sample_rate, channels);
+  }
+  fn reset(&mut self) {}
+}
+
+// ─── Legacy built-in effects (deprecated) ───────────────────────────
+//
+// These types are retained as thin wrappers over the equivalent
+// phonon-core plugins so call sites keep compiling. Prefer constructing
+// the core plugin directly and pushing it via `add_plugin` /
+// `EffectChain::push_plugin`.
+
+/// Legacy volume effect — wraps [`VolumePlugin`].
+#[deprecated(
+  since = "0.7.0",
+  note = "use phonon_core::VolumePlugin via AudioPlayer::add_plugin"
+)]
+pub struct VolumeEffect {
+  inner: VolumePlugin,
+}
+
+#[allow(deprecated)]
+impl VolumeEffect {
+  pub fn new(gain: f32) -> Self {
+    Self {
+      inner: VolumePlugin::new(gain),
+    }
+  }
+}
+
+#[allow(deprecated)]
+impl AudioEffect for VolumeEffect {
+  fn process(&mut self, samples: &mut [f32], sample_rate: u32, channels: u16) {
+    self.inner.process(samples, sample_rate, channels);
+  }
   fn name(&self) -> &str {
     "Volume"
   }
 }
 
-/// Simple first-order low-pass filter effect.
-#[derive(Debug)]
+/// Legacy low-pass effect — wraps [`LowPassPlugin`].
+#[deprecated(
+  since = "0.7.0",
+  note = "use phonon_core::LowPassPlugin via AudioPlayer::add_plugin"
+)]
 pub struct LowPassEffect {
-  cutoff_hz: f64,
-  prev: [f64; 2], // per-channel state (max 2 channels)
+  inner: LowPassPlugin,
 }
 
+#[allow(deprecated)]
 impl LowPassEffect {
   pub fn new(cutoff_hz: f64) -> Self {
     Self {
-      cutoff_hz,
-      prev: [0.0; 2],
+      inner: LowPassPlugin::new(cutoff_hz as f32),
     }
   }
 }
 
+#[allow(deprecated)]
 impl AudioEffect for LowPassEffect {
   fn process(&mut self, samples: &mut [f32], sample_rate: u32, channels: u16) {
-    let rc = 1.0 / (2.0 * std::f64::consts::PI * self.cutoff_hz);
-    let dt = 1.0 / sample_rate as f64;
-    let alpha = dt / (rc + dt);
-    let ch = channels as usize;
-
-    for i in (0..samples.len()).step_by(ch) {
-      for c in 0..ch.min(2) {
-        let idx = i + c;
-        if idx < samples.len() {
-          let input = samples[idx] as f64;
-          self.prev[c] += alpha * (input - self.prev[c]);
-          samples[idx] = self.prev[c] as f32;
-        }
-      }
-    }
+    self.inner.process(samples, sample_rate, channels);
   }
-
   fn name(&self) -> &str {
     "LowPass"
   }
 }
 
-/// Simple hard-knee compressor effect.
-#[derive(Debug)]
-pub struct CompressorEffect {
-  threshold: f32,
-  ratio: f32,
-  envelope: f32,
-  attack_coeff: f32,
-  release_coeff: f32,
+/// Legacy high-pass effect — wraps [`HighPassPlugin`].
+#[deprecated(
+  since = "0.7.0",
+  note = "use phonon_core::HighPassPlugin via AudioPlayer::add_plugin"
+)]
+pub struct HighPassEffect {
+  inner: HighPassPlugin,
 }
 
-impl CompressorEffect {
-  /// Creates a compressor effect.
-  ///
-  /// * `threshold` — amplitude above which compression starts (0.0–1.0).
-  /// * `ratio` — compression ratio (e.g. 4.0 = 4:1).
-  /// * `attack_ms` — attack time in milliseconds.
-  /// * `release_ms` — release time in milliseconds.
-  pub fn new(threshold: f32, ratio: f32, attack_ms: f32, release_ms: f32) -> Self {
-    // Coefficients will be recomputed per-block based on sample rate
+#[allow(deprecated)]
+impl HighPassEffect {
+  pub fn new(cutoff_hz: f64) -> Self {
     Self {
-      threshold,
-      ratio,
-      envelope: 0.0,
-      attack_coeff: attack_ms,
-      release_coeff: release_ms,
+      inner: HighPassPlugin::new(cutoff_hz as f32),
     }
   }
 }
 
-impl AudioEffect for CompressorEffect {
-  fn process(&mut self, samples: &mut [f32], sample_rate: u32, _channels: u16) {
-    let attack = (-1.0 / (self.attack_coeff * 0.001 * sample_rate as f32)).exp();
-    let release = (-1.0 / (self.release_coeff * 0.001 * sample_rate as f32)).exp();
+#[allow(deprecated)]
+impl AudioEffect for HighPassEffect {
+  fn process(&mut self, samples: &mut [f32], sample_rate: u32, channels: u16) {
+    self.inner.process(samples, sample_rate, channels);
+  }
+  fn name(&self) -> &str {
+    "HighPass"
+  }
+}
 
-    for s in samples.iter_mut() {
-      let input_abs = s.abs();
+/// Legacy compressor effect — wraps [`CompressorPlugin`].
+#[deprecated(
+  since = "0.7.0",
+  note = "use phonon_core::CompressorPlugin via AudioPlayer::add_plugin"
+)]
+pub struct CompressorEffect {
+  inner: CompressorPlugin,
+}
 
-      // Envelope follower
-      if input_abs > self.envelope {
-        self.envelope = attack * self.envelope + (1.0 - attack) * input_abs;
-      } else {
-        self.envelope = release * self.envelope + (1.0 - release) * input_abs;
-      }
-
-      // Compute gain reduction
-      if self.envelope > self.threshold {
-        let over = self.envelope - self.threshold;
-        let compressed_over = over / self.ratio;
-        let target = self.threshold + compressed_over;
-        let gain = if self.envelope > 0.0 {
-          target / self.envelope
-        } else {
-          1.0
-        };
-        *s *= gain;
-      }
+#[allow(deprecated)]
+impl CompressorEffect {
+  pub fn new(threshold: f32, ratio: f32, attack_ms: f32, release_ms: f32) -> Self {
+    Self {
+      inner: CompressorPlugin::new(threshold, ratio, attack_ms, release_ms),
     }
   }
+}
 
+#[allow(deprecated)]
+impl AudioEffect for CompressorEffect {
+  fn process(&mut self, samples: &mut [f32], sample_rate: u32, channels: u16) {
+    self.inner.process(samples, sample_rate, channels);
+  }
   fn name(&self) -> &str {
     "Compressor"
   }
 }
 
-/// Multi-band parametric EQ effect.
+/// Legacy parametric EQ effect — wraps [`ParametricEqPlugin`] when the
+/// caller wants a fixed-band EQ but does not need the named parameter
+/// API; otherwise prefer [`ParametricEqPlugin`] directly.
 ///
-/// Wraps `phonon_core::ParametricEq` as a real-time `AudioEffect`.
+/// Unlike the plugin (which uses fixed bands), this effect lets the
+/// caller supply arbitrary [`EqBand`]s up-front.
+#[deprecated(
+  since = "0.7.0",
+  note = "use phonon_core::ParametricEq directly inside a custom DspPlugin, or push the ParametricEqPlugin via AudioPlayer::add_plugin"
+)]
 pub struct ParametricEqEffect {
-  bands: Vec<phonon_core::EqBand>,
-  eq: Option<phonon_core::ParametricEq>,
+  bands: Vec<EqBand>,
+  eq: Option<ParametricEq>,
   last_sample_rate: u32,
   last_channels: u16,
 }
 
+#[allow(deprecated)]
 impl ParametricEqEffect {
-  /// Creates a new parametric EQ effect with the given bands.
-  ///
-  /// The internal biquad state is lazily initialized on the first `process`
-  /// call (when sample rate / channels are known).
-  pub fn new(bands: Vec<phonon_core::EqBand>) -> Self {
+  pub fn new(bands: Vec<EqBand>) -> Self {
     Self {
       bands,
       eq: None,
@@ -245,73 +308,25 @@ impl ParametricEqEffect {
   }
 }
 
+#[allow(deprecated)]
 impl AudioEffect for ParametricEqEffect {
   fn process(&mut self, samples: &mut [f32], sample_rate: u32, channels: u16) {
-    // Reinitialise when format changes or first call.
     if self.eq.is_none() || sample_rate != self.last_sample_rate || channels != self.last_channels {
-      self.eq = Some(phonon_core::ParametricEq::new(
-        self.bands.clone(),
-        sample_rate,
-        channels,
-      ));
+      self.eq = Some(ParametricEq::new(self.bands.clone(), sample_rate, channels));
       self.last_sample_rate = sample_rate;
       self.last_channels = channels;
     }
-
     if let Some(eq) = &mut self.eq {
       eq.process(samples);
     }
   }
-
   fn name(&self) -> &str {
     "ParametricEQ"
   }
 }
 
-/// High-pass filter effect (first-order).
-#[derive(Debug)]
-pub struct HighPassEffect {
-  cutoff_hz: f64,
-  prev_input: [f64; 2],
-  prev_output: [f64; 2],
-}
-
-impl HighPassEffect {
-  pub fn new(cutoff_hz: f64) -> Self {
-    Self {
-      cutoff_hz,
-      prev_input: [0.0; 2],
-      prev_output: [0.0; 2],
-    }
-  }
-}
-
-impl AudioEffect for HighPassEffect {
-  fn process(&mut self, samples: &mut [f32], sample_rate: u32, channels: u16) {
-    let rc = 1.0 / (2.0 * std::f64::consts::PI * self.cutoff_hz);
-    let dt = 1.0 / sample_rate as f64;
-    let alpha = rc / (rc + dt);
-    let ch = channels as usize;
-
-    for i in (0..samples.len()).step_by(ch) {
-      for c in 0..ch.min(2) {
-        let idx = i + c;
-        if idx < samples.len() {
-          let input = samples[idx] as f64;
-          self.prev_output[c] = alpha * (self.prev_output[c] + input - self.prev_input[c]);
-          self.prev_input[c] = input;
-          samples[idx] = self.prev_output[c] as f32;
-        }
-      }
-    }
-  }
-
-  fn name(&self) -> &str {
-    "HighPass"
-  }
-}
-
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
   use super::*;
 
@@ -326,7 +341,6 @@ mod tests {
 
   #[test]
   fn test_lowpass_attenuates_high_freq() {
-    // Generate a high-frequency signal (10kHz at 44100Hz)
     let mut high_freq: Vec<f32> = (0..1024)
       .map(|i| {
         let t = i as f64 / 44100.0;
@@ -349,10 +363,7 @@ mod tests {
       .sum::<f64>()
       / high_freq.len() as f64;
 
-    assert!(
-      filtered_rms < original_rms * 0.1,
-      "Low-pass should attenuate 10kHz signal significantly"
-    );
+    assert!(filtered_rms < original_rms * 0.1);
   }
 
   #[test]
@@ -364,7 +375,6 @@ mod tests {
     let mut samples = vec![0.4f32, -0.4];
     chain.process(&mut samples, 44100, 1);
 
-    // 2.0 * 0.5 = 1.0 overall gain
     assert!((samples[0] - 0.4).abs() < 1e-6);
     assert!((samples[1] - (-0.4)).abs() < 1e-6);
   }
@@ -372,7 +382,6 @@ mod tests {
   #[test]
   fn test_plugin_adapter_in_chain() {
     let mut chain = EffectChain::new();
-    // Use a DspPlugin from phonon-core via push_plugin
     let plugin = phonon_core::VolumePlugin::new(0.5);
     chain.push_plugin(Box::new(plugin));
 
@@ -393,21 +402,16 @@ mod tests {
   #[test]
   fn test_compressor_reduces_loud_signal() {
     let mut comp = CompressorEffect::new(0.3, 4.0, 1.0, 10.0);
-    let mut samples = vec![0.8f32; 4410]; // 0.1 seconds at 44100
+    let mut samples = vec![0.8f32; 4410];
     comp.process(&mut samples, 44100, 1);
 
-    // Check the last portion where envelope has settled
     let tail = &samples[2000..];
     let peak = tail.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-    assert!(
-      peak < 0.8,
-      "Compressor should reduce peaks above threshold, got {peak}"
-    );
+    assert!(peak < 0.8, "Compressor should reduce peaks, got {peak}");
   }
 
   #[test]
   fn test_highpass_attenuates_low_freq() {
-    // Generate a low-frequency signal (50Hz at 44100Hz)
     let mut low_freq: Vec<f32> = (0..4410)
       .map(|i| {
         let t = i as f64 / 44100.0;
@@ -430,9 +434,34 @@ mod tests {
       .sum::<f64>()
       / low_freq.len() as f64;
 
-    assert!(
-      filtered_rms < original_rms * 0.3,
-      "High-pass should attenuate 50Hz signal"
-    );
+    assert!(filtered_rms < original_rms * 0.3);
+  }
+
+  #[test]
+  fn test_effect_as_plugin_processes() {
+    // Wrap an AudioEffect as a DspPlugin and run it through the plugin API.
+    let effect: Box<dyn AudioEffect> = Box::new(VolumeEffect::new(0.5));
+    let mut plug = EffectAsPlugin::new(effect, "test.volume");
+    assert_eq!(plug.id(), "test.volume");
+    assert_eq!(plug.name(), "Volume");
+    assert!(plug.parameters().is_empty());
+    assert!(plug.set_parameter("gain", 0.0).is_err());
+
+    let mut samples = vec![1.0_f32, -1.0];
+    plug.process(&mut samples, 44100, 1);
+    assert!((samples[0] - 0.5).abs() < 1e-6);
+  }
+
+  #[test]
+  fn test_plugin_adapter_round_trip() {
+    // DspPlugin → PluginAdapter → AudioEffect → EffectAsPlugin → DspPlugin
+    // should still process correctly.
+    let core = phonon_core::VolumePlugin::new(2.0);
+    let as_effect: Box<dyn AudioEffect> = Box::new(PluginAdapter::new(Box::new(core)));
+    let mut as_plugin = EffectAsPlugin::new(as_effect, "round.trip");
+
+    let mut samples = vec![0.25_f32, -0.25];
+    as_plugin.process(&mut samples, 44100, 1);
+    assert!((samples[0] - 0.5).abs() < 1e-6);
   }
 }
