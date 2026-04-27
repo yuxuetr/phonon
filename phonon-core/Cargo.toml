@@ -5,6 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Pure-Rust audio DSP core: AudioBuffer, EQ, fade, mix, normalize, LUFS, spectrum, plugins"
+keywords = ["audio", "dsp", "phonon", "lufs", "eq"]
+categories = ["multimedia::audio", "multimedia"]
+readme = "README.md"
 
 [features]
 default = ["parallel", "simd"]

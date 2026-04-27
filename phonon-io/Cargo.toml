@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Audio file I/O for Phonon: read/write WAV/MP3/FLAC/OGG/AAC, ID3v2 podcast tags, FLAC/Vorbis comments"
+keywords = ["audio", "mp3", "flac", "id3", "phonon"]
+categories = ["multimedia::audio", "multimedia::encoding"]
 
 [dependencies]
 phonon-core.workspace = true

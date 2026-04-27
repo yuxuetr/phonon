@@ -5,6 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Real-time audio playback engine for Phonon: cpal-backed AudioPlayer with effect chain and streaming TTS playback helper"
+keywords = ["audio", "playback", "cpal", "phonon", "streaming"]
+categories = ["multimedia::audio"]
+readme = "README.md"
 
 [dependencies]
 phonon-core.workspace = true

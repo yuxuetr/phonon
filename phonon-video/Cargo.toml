@@ -5,7 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 description = "Video audio track extraction and replacement for Phonon — wraps ffmpeg CLI"
+keywords = ["video", "ffmpeg", "audio", "phonon"]
+categories = ["multimedia::audio", "multimedia::video"]
 
 [dependencies]
 phonon-core.workspace = true

@@ -5,7 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 description = "REST API server for Phonon audio engine — exposes TTS and podcast generation"
+keywords = ["audio", "rest", "axum", "tts", "phonon"]
+categories = ["multimedia::audio", "web-programming::http-server"]
 
 [dependencies]
 phonon-core.workspace = true

@@ -5,7 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 description = "Podcast generation pipeline for Phonon — from script to finished audio"
+keywords = ["podcast", "tts", "audio", "phonon"]
+categories = ["multimedia::audio"]
 
 [dependencies]
 phonon-core.workspace = true

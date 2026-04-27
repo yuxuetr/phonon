@@ -5,8 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-authors = ["yuxuetr"]
+homepage.workspace = true
+authors.workspace = true
 description = "WAV audio file processing library for Phonon"
+keywords = ["audio", "wav", "phonon"]
+categories = ["multimedia::audio", "multimedia::encoding"]
 
 [dependencies]
 phonon-core.workspace = true

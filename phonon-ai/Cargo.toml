@@ -5,7 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "AI-powered audio generation for Phonon (TTS, STT)"
+homepage.workspace = true
+authors.workspace = true
+description = "AI-powered audio generation for Phonon: OpenAI/ElevenLabs/Edge TTS, Whisper STT, sound generation"
+keywords = ["tts", "stt", "openai", "elevenlabs", "phonon"]
+categories = ["multimedia::audio", "api-bindings"]
 
 [dependencies]
 phonon-core.workspace = true
