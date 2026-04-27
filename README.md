@@ -37,6 +37,9 @@ cargo bench -p phonon-core
 cargo run -p phonon-server
 ```
 
+For copy-pasteable recipes (CLI / Rust / REST / MCP / Wasm), see the
+**usage guide**: [`docs/usage.md`](./docs/usage.md) ([中文版](./docs/usage.zh-CN.md)).
+
 ## Features
 
 ### Audio Processing (phonon-core)
