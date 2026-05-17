@@ -27,3 +27,4 @@ futures.workspace = true
 phonon-wav.workspace = true
 blake3.workspace = true
 dirs.workspace = true
+hex.workspace = true
