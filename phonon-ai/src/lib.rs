@@ -69,5 +69,17 @@ pub enum AiError {
   Io(String),
 }
 
+impl AiError {
+  /// Whether retrying the same request may succeed: network failures,
+  /// rate limiting (429) and server errors (5xx).
+  pub fn is_transient(&self) -> bool {
+    match self {
+      AiError::Http(_) => true,
+      AiError::Api { status, .. } => *status == 429 || (500..600).contains(status),
+      AiError::Config(_) | AiError::Decode(_) | AiError::Io(_) => false,
+    }
+  }
+}
+
 /// Result type for phonon-ai operations.
 pub type Result<T> = std::result::Result<T, AiError>;

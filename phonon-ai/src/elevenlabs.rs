@@ -22,7 +22,7 @@
 //! ```
 
 use crate::AiError;
-use crate::client::HttpClient;
+use crate::client::{HttpClient, RETRY_BASE_DELAY, retry_transient};
 use crate::tts::pcm_i16le_to_f32;
 use crate::voice::VoiceConfig;
 use futures::StreamExt;
@@ -205,34 +205,37 @@ impl crate::tts::TtsProvider for ElevenLabsTts {
       voice_settings,
     };
 
-    let response = self
-      .client
-      .inner()
-      .post(&url)
-      .header("xi-api-key", self.client.api_key())
-      .header("Content-Type", "application/json")
-      .header("Accept", "audio/mpeg")
-      .json(&request_body)
-      .send()
-      .await
-      .map_err(|e| AiError::Http(e.to_string()))?;
-
-    if !response.status().is_success() {
-      let status = response.status();
-      let body = response
-        .text()
+    let audio_bytes = retry_transient(RETRY_BASE_DELAY, || async {
+      let response = self
+        .client
+        .inner()
+        .post(&url)
+        .header("xi-api-key", self.client.api_key())
+        .header("Content-Type", "application/json")
+        .header("Accept", "audio/mpeg")
+        .json(&request_body)
+        .send()
         .await
-        .unwrap_or_else(|_| "Failed to read error body".to_string());
-      return Err(AiError::Api {
-        status: status.as_u16(),
-        message: body,
-      });
-    }
+        .map_err(|e| AiError::Http(e.to_string()))?;
 
-    let audio_bytes = response
-      .bytes()
-      .await
-      .map_err(|e| AiError::Http(e.to_string()))?;
+      if !response.status().is_success() {
+        let status = response.status();
+        let body = response
+          .text()
+          .await
+          .unwrap_or_else(|_| "Failed to read error body".to_string());
+        return Err(AiError::Api {
+          status: status.as_u16(),
+          message: body,
+        });
+      }
+
+      response
+        .bytes()
+        .await
+        .map_err(|e| AiError::Http(e.to_string()))
+    })
+    .await?;
 
     info!(
       bytes = audio_bytes.len(),

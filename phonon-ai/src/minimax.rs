@@ -42,7 +42,7 @@
 //!   how `phonon_podcast::PodcastPipeline` already drives TTS).
 
 use crate::AiError;
-use crate::client::HttpClient;
+use crate::client::{HttpClient, RETRY_BASE_DELAY, retry_transient};
 use crate::voice::VoiceConfig;
 use phonon_core::AudioBuffer;
 use serde::{Deserialize, Serialize};
@@ -193,6 +193,16 @@ fn language_boost(language: Option<&str>) -> Option<&'static str> {
   }
 }
 
+/// HTTP-style status for a MiniMax `base_resp.status_code`. Rate limiting
+/// (1002 RPM, 1039 TPM) maps to 429 so it is retried as transient; other
+/// codes pass through unchanged.
+fn business_error_status(code: i32) -> u16 {
+  match code {
+    1002 | 1039 => 429,
+    other => u16::try_from(other).unwrap_or(500),
+  }
+}
+
 /// Clamp speed into MiniMax's documented `[0.5, 2.0]` range.
 fn clamp_speed(speed: f64) -> Option<f64> {
   if (speed - 1.0).abs() < f64::EPSILON {
@@ -270,6 +280,56 @@ struct BaseResp {
   status_msg: String,
 }
 
+impl MiniMaxTts {
+  /// One T2A request; business errors in `base_resp` become `AiError::Api`.
+  async fn send_t2a(&self, url: &str, request: &T2aRequest<'_>) -> Result<T2aResponse, AiError> {
+    let response = self
+      .client
+      .inner()
+      .post(url)
+      .header("Authorization", format!("Bearer {}", self.client.api_key()))
+      .header("Content-Type", "application/json")
+      .json(request)
+      .send()
+      .await
+      .map_err(|e| AiError::Http(e.to_string()))?;
+
+    let http_status = response.status();
+    let raw = response
+      .text()
+      .await
+      .map_err(|e| AiError::Http(e.to_string()))?;
+
+    if !http_status.is_success() {
+      return Err(AiError::Api {
+        status: http_status.as_u16(),
+        message: raw,
+      });
+    }
+
+    let parsed: T2aResponse = serde_json::from_str(&raw).map_err(|e| {
+      AiError::Decode(format!(
+        "MiniMax T2A response is not valid JSON ({e}); body={raw}"
+      ))
+    })?;
+
+    let code = parsed.base_resp.status_code;
+    if code != 0 {
+      // MiniMax surfaces business errors as HTTP 200 with a non-zero
+      // `base_resp.status_code`.
+      let status = business_error_status(code);
+      return Err(AiError::Api {
+        status,
+        message: format!(
+          "MiniMax T2A error ({code}): {}",
+          parsed.base_resp.status_msg
+        ),
+      });
+    }
+    Ok(parsed)
+  }
+}
+
 impl crate::tts::TtsProvider for MiniMaxTts {
   #[instrument(skip(self, text), fields(text_len = text.len(), voice = %voice.voice_id, model = %self.model))]
   async fn synthesize(&self, text: &str, voice: &VoiceConfig) -> Result<AudioBuffer, AiError> {
@@ -295,49 +355,7 @@ impl crate::tts::TtsProvider for MiniMaxTts {
     };
 
     let url = format!("{}/t2a_v2", self.client.base_url());
-    let response = self
-      .client
-      .inner()
-      .post(&url)
-      .header("Authorization", format!("Bearer {}", self.client.api_key()))
-      .header("Content-Type", "application/json")
-      .json(&request)
-      .send()
-      .await
-      .map_err(|e| AiError::Http(e.to_string()))?;
-
-    let http_status = response.status();
-    let raw = response
-      .text()
-      .await
-      .map_err(|e| AiError::Http(e.to_string()))?;
-
-    if !http_status.is_success() {
-      return Err(AiError::Api {
-        status: http_status.as_u16(),
-        message: raw,
-      });
-    }
-
-    let parsed: T2aResponse = serde_json::from_str(&raw).map_err(|e| {
-      AiError::Decode(format!(
-        "MiniMax T2A response is not valid JSON ({e}); body={raw}"
-      ))
-    })?;
-
-    if parsed.base_resp.status_code != 0 {
-      // MiniMax surfaces business errors as HTTP 200 with a non-zero
-      // `base_resp.status_code` (e.g. 1039 = TPM throttling). Re-shape
-      // into AiError::Api so callers see a uniform error surface.
-      let mapped_status = u16::try_from(parsed.base_resp.status_code).unwrap_or(500);
-      return Err(AiError::Api {
-        status: mapped_status,
-        message: format!(
-          "MiniMax T2A error ({}): {}",
-          parsed.base_resp.status_code, parsed.base_resp.status_msg
-        ),
-      });
-    }
+    let parsed = retry_transient(RETRY_BASE_DELAY, || self.send_t2a(&url, &request)).await?;
 
     let hex_audio = parsed.data.and_then(|d| d.audio).ok_or_else(|| {
       AiError::Decode("MiniMax T2A response missing data.audio field".to_string())
@@ -370,6 +388,23 @@ impl crate::tts::TtsProvider for MiniMaxTts {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn test_throttling_codes_are_transient() {
+    for code in [1002, 1039] {
+      let err = AiError::Api {
+        status: business_error_status(code),
+        message: String::new(),
+      };
+      assert!(err.is_transient(), "code {code}");
+    }
+    // Invalid API key (1004) is permanent.
+    let err = AiError::Api {
+      status: business_error_status(1004),
+      message: String::new(),
+    };
+    assert!(!err.is_transient());
+  }
 
   #[test]
   fn new_without_env_returns_config_error() {

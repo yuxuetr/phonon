@@ -26,7 +26,7 @@
 //! ```
 
 use crate::AiError;
-use crate::client::ApiKey;
+use crate::client::{ApiKey, CONNECT_TIMEOUT, RETRY_BASE_DELAY, retry_transient};
 use phonon_core::AudioBuffer;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -161,6 +161,7 @@ impl HttpSoundGen {
   pub fn new(endpoint: impl Into<String>, api_key: impl Into<String>) -> Result<Self, AiError> {
     let client = reqwest::Client::builder()
       .timeout(std::time::Duration::from_secs(300))
+      .connect_timeout(CONNECT_TIMEOUT)
       .build()
       .map_err(|e| AiError::Http(e.to_string()))?;
 
@@ -314,6 +315,7 @@ impl ReplicateSoundGen {
   pub fn with_token(api_token: impl Into<String>) -> Result<Self, AiError> {
     let client = reqwest::Client::builder()
       .timeout(Duration::from_secs(30))
+      .connect_timeout(CONNECT_TIMEOUT)
       .build()
       .map_err(|e| AiError::Http(e.to_string()))?;
 
@@ -394,21 +396,23 @@ impl ReplicateSoundGen {
       }
       tokio::time::sleep(self.poll_interval).await;
 
-      let poll_resp = self
-        .client
-        .get(&poll_url)
-        .header(
-          "Authorization",
-          format!("Bearer {}", self.api_token.expose()),
-        )
-        .send()
-        .await
-        .map_err(|e| AiError::Http(e.to_string()))?;
-
-      let status_pred: ReplicatePrediction = poll_resp
-        .json()
-        .await
-        .map_err(|e| AiError::Http(e.to_string()))?;
+      // A dropped poll must not abandon a prediction that is still running.
+      let status_pred: ReplicatePrediction = retry_transient(RETRY_BASE_DELAY, || async {
+        self
+          .client
+          .get(&poll_url)
+          .header(
+            "Authorization",
+            format!("Bearer {}", self.api_token.expose()),
+          )
+          .send()
+          .await
+          .map_err(|e| AiError::Http(e.to_string()))?
+          .json()
+          .await
+          .map_err(|e| AiError::Http(e.to_string()))
+      })
+      .await?;
 
       match status_pred.status.as_str() {
         "succeeded" => {

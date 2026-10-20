@@ -18,10 +18,15 @@
 //! ```
 
 use crate::AiError;
+use crate::client::{RETRY_BASE_DELAY, retry_transient};
 use crate::voice::VoiceConfig;
 use phonon_core::AudioBuffer;
 use std::io::Cursor;
+use std::time::Duration;
 use tracing::{info, instrument};
+
+/// Upper bound for one connect + synthesize round trip.
+const EDGE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Edge TTS provider.
 ///
@@ -76,33 +81,35 @@ impl crate::tts::TtsProvider for EdgeTts {
   async fn synthesize(&self, text: &str, voice: &VoiceConfig) -> Result<AudioBuffer, AiError> {
     info!("Synthesizing text via Edge TTS");
 
-    let voice_name = voice.voice_id.clone();
-    let text_owned = text.to_string();
-
     // Map VoiceConfig speed (0.25–4.0, default 1.0) to Edge rate percentage
     let rate = ((voice.speed - 1.0) * 100.0) as i32;
 
-    // Use spawn_blocking because msedge-tts uses sync WebSocket internally
-    let audio_bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, AiError> {
-      let config = msedge_tts::tts::SpeechConfig {
-        voice_name,
-        audio_format: "audio-24khz-48kbitrate-mono-mp3".to_string(),
-        pitch: 0,
-        rate,
-        volume: 0,
+    let config = msedge_tts::tts::SpeechConfig {
+      voice_name: voice.voice_id.clone(),
+      audio_format: "audio-24khz-48kbitrate-mono-mp3".to_string(),
+      pitch: 0,
+      rate,
+      volume: 0,
+    };
+
+    // The async client can be dropped mid-request, so the timeout really
+    // cancels a stalled connection instead of leaking a blocking thread.
+    let audio_bytes = retry_transient(RETRY_BASE_DELAY, || async {
+      let synthesis = async {
+        let mut client = msedge_tts::tts::client::connect_async()
+          .await
+          .map_err(|e| AiError::Http(format!("Edge TTS connection failed: {e}")))?;
+        client
+          .synthesize(text, &config)
+          .await
+          .map_err(|e| AiError::Http(format!("Edge TTS synthesis failed: {e}")))
       };
-
-      let mut client = msedge_tts::tts::client::connect()
-        .map_err(|e| AiError::Http(format!("Edge TTS connection failed: {e}")))?;
-
-      let audio = client
-        .synthesize(&text_owned, &config)
-        .map_err(|e| AiError::Http(format!("Edge TTS synthesis failed: {e}")))?;
-
+      let audio = tokio::time::timeout(EDGE_TIMEOUT, synthesis)
+        .await
+        .map_err(|_| AiError::Http(format!("Edge TTS timed out after {EDGE_TIMEOUT:?}")))??;
       Ok(audio.audio_bytes)
     })
-    .await
-    .map_err(|e| AiError::Http(format!("Edge TTS task failed: {e}")))??;
+    .await?;
 
     info!(bytes = audio_bytes.len(), "Received Edge TTS response");
 
