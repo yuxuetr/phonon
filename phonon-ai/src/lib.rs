@@ -39,7 +39,9 @@ pub use edge_tts::EdgeTts;
 pub use elevenlabs::ElevenLabsTts;
 pub use minimax::MiniMaxTts;
 pub use sound_gen::{HttpSoundGen, ReplicateSoundGen, SoundGenProvider, SoundPreset, SoundPrompt};
-pub use stt::{SttProvider, TranscribeOptions, TranscriptResult, TranscriptSegment, WhisperStt};
+pub use stt::{
+  SegmentMode, SttProvider, TranscribeOptions, TranscriptResult, TranscriptSegment, WhisperStt,
+};
 pub use tts::{OpenAiTts, TtsProvider, pcm_i16le_to_f32};
 pub use voice::VoiceConfig;
 

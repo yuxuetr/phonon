@@ -63,6 +63,7 @@ pub trait TtsProvider: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct OpenAiTts {
   client: HttpClient,
+  format: String,
 }
 
 /// OpenAI TTS API request body.
@@ -82,14 +83,25 @@ impl OpenAiTts {
   /// Reads the API key from `OPENAI_API_KEY` environment variable.
   pub fn new() -> Result<Self, AiError> {
     let client = HttpClient::openai()?;
-    Ok(Self { client })
+    Ok(Self::with_client(client))
   }
 
   /// Creates a new `OpenAiTts` with a custom HTTP client.
   ///
   /// Useful for OpenAI-compatible APIs (e.g. local TTS servers).
   pub fn with_client(client: HttpClient) -> Self {
-    Self { client }
+    Self {
+      client,
+      format: "mp3".to_string(),
+    }
+  }
+
+  /// Set the `response_format` to request (default `"mp3"`). Some compatible
+  /// servers lack mp3 (GLM only returns wav / pcm); any format `decode_audio`
+  /// reads works.
+  pub fn with_format(mut self, format: impl Into<String>) -> Self {
+    self.format = format.into();
+    self
   }
 }
 
@@ -130,7 +142,7 @@ impl TtsProvider for OpenAiTts {
       input: text,
       voice: &voice.voice_id,
       speed,
-      response_format: "mp3",
+      response_format: &self.format,
     };
 
     let audio_bytes = retry_transient(|| async {
@@ -166,8 +178,7 @@ impl TtsProvider for OpenAiTts {
 
     info!(bytes = audio_bytes.len(), "Received audio response");
 
-    // Decode the audio response (MP3) into an AudioBuffer
-    let buffer = decode(&audio_bytes, "mp3")?;
+    let buffer = decode(&audio_bytes, &self.format)?;
 
     info!(
       duration = buffer.duration_secs(),

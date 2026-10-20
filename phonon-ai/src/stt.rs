@@ -141,6 +141,34 @@ pub trait SttProvider: Send + Sync {
 pub struct WhisperStt {
   client: HttpClient,
   model: String,
+  segment_mode: SegmentMode,
+  path: String,
+}
+
+const DEFAULT_PATH: &str = "audio/transcriptions";
+
+/// How an OpenAI-compatible `/audio/transcriptions` endpoint returns timed segments.
+///
+/// Vendors differ: sending `verbose_json` where it is not accepted is a 400.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SegmentMode {
+  /// Segments only with `response_format=verbose_json` (OpenAI, MiniMax).
+  VerboseJson,
+  /// Segments in the default response; `response_format` is not sent (GLM).
+  Always,
+  /// Text only; `verbose_json` is rejected (StepFun).
+  Unsupported,
+}
+
+impl SegmentMode {
+  /// The `response_format` form field to send, if any.
+  fn response_format(self, timestamps: bool) -> Option<&'static str> {
+    match self {
+      SegmentMode::Always => None,
+      SegmentMode::VerboseJson if timestamps => Some("verbose_json"),
+      SegmentMode::VerboseJson | SegmentMode::Unsupported => Some("json"),
+    }
+  }
 }
 
 /// Raw verbose_json response from the Whisper API.
@@ -155,12 +183,6 @@ struct WhisperVerboseResponse {
   segments: Vec<TranscriptSegment>,
 }
 
-/// Simple json response (no segments).
-#[derive(Deserialize)]
-struct WhisperSimpleResponse {
-  text: String,
-}
-
 impl WhisperStt {
   /// Creates a new `WhisperStt` using the default OpenAI endpoint.
   ///
@@ -170,6 +192,8 @@ impl WhisperStt {
     Ok(Self {
       client,
       model: "whisper-1".to_string(),
+      segment_mode: SegmentMode::VerboseJson,
+      path: DEFAULT_PATH.to_string(),
     })
   }
 
@@ -178,6 +202,8 @@ impl WhisperStt {
     Self {
       client,
       model: model.into(),
+      segment_mode: SegmentMode::VerboseJson,
+      path: DEFAULT_PATH.to_string(),
     }
   }
 
@@ -186,23 +212,35 @@ impl WhisperStt {
     self.model = model.into();
   }
 
+  /// Set how the endpoint returns timed segments. Default: [`SegmentMode::VerboseJson`].
+  pub fn with_segment_mode(mut self, mode: SegmentMode) -> Self {
+    self.segment_mode = mode;
+    self
+  }
+
+  /// Set the endpoint path under the base URL (default `"audio/transcriptions"`).
+  /// MiniMax takes the same multipart body at `"speech_to_text"`.
+  pub fn with_path(mut self, path: impl Into<String>) -> Self {
+    self.path = path.into();
+    self
+  }
+
   /// Build the multipart form for the Whisper API.
   fn build_form(
     &self,
     file_part: reqwest::multipart::Part,
     options: &TranscribeOptions,
   ) -> reqwest::multipart::Form {
-    let response_format = if options.timestamps {
-      "verbose_json"
-    } else {
-      "json"
-    };
+    let response_format = self.segment_mode.response_format(options.timestamps);
+    let verbose = response_format == Some("verbose_json");
 
     let mut form = reqwest::multipart::Form::new()
       .part("file", file_part)
       .text("model", self.model.clone())
-      .text("response_format", response_format.to_string())
       .text("temperature", options.temperature.to_string());
+    if let Some(format) = response_format {
+      form = form.text("response_format", format);
+    }
 
     if let Some(ref lang) = options.language {
       form = form.text("language", lang.clone());
@@ -211,8 +249,8 @@ impl WhisperStt {
       form = form.text("prompt", prompt.clone());
     }
 
-    // Request word-level timestamps when segments are requested.
-    if options.timestamps {
+    // Request segment-level timestamps when segments are requested.
+    if verbose {
       form = form.text("timestamp_granularities[]", "segment".to_string());
     }
 
@@ -223,9 +261,8 @@ impl WhisperStt {
   async fn send_request(
     &self,
     form: reqwest::multipart::Form,
-    timestamps: bool,
   ) -> Result<TranscriptResult, AiError> {
-    let url = format!("{}/audio/transcriptions", self.client.base_url());
+    let url = format!("{}/{}", self.client.base_url(), self.path);
 
     let response = self
       .client
@@ -254,25 +291,15 @@ impl WhisperStt {
       .await
       .map_err(|e| AiError::Http(e.to_string()))?;
 
-    if timestamps {
-      let resp: WhisperVerboseResponse =
-        serde_json::from_str(&body).map_err(|e| AiError::Decode(e.to_string()))?;
-      Ok(TranscriptResult {
-        text: resp.text,
-        language: resp.language,
-        duration: resp.duration,
-        segments: resp.segments,
-      })
-    } else {
-      let resp: WhisperSimpleResponse =
-        serde_json::from_str(&body).map_err(|e| AiError::Decode(e.to_string()))?;
-      Ok(TranscriptResult {
-        text: resp.text,
-        language: None,
-        duration: None,
-        segments: vec![],
-      })
-    }
+    // Every mode's body fits the verbose shape: `segments` defaults to empty.
+    let resp: WhisperVerboseResponse =
+      serde_json::from_str(&body).map_err(|e| AiError::Decode(e.to_string()))?;
+    Ok(TranscriptResult {
+      text: resp.text,
+      language: resp.language,
+      duration: resp.duration,
+      segments: resp.segments,
+    })
   }
 }
 
@@ -302,7 +329,7 @@ impl SttProvider for WhisperStt {
       .map_err(|e| AiError::Http(e.to_string()))?;
 
     let form = self.build_form(part, &opts);
-    let result = self.send_request(form, opts.timestamps).await?;
+    let result = self.send_request(form).await?;
 
     info!(
       text_len = result.text.len(),
@@ -329,7 +356,7 @@ impl SttProvider for WhisperStt {
       .map_err(|e| AiError::Http(e.to_string()))?;
 
     let form = self.build_form(part, &opts);
-    let result = self.send_request(form, opts.timestamps).await?;
+    let result = self.send_request(form).await?;
 
     info!(
       text_len = result.text.len(),
@@ -391,11 +418,25 @@ mod tests {
   }
 
   #[test]
-  fn test_simple_json_deserialization() {
-    let json = r#"{"text": "Hello world"}"#;
-    let resp: WhisperSimpleResponse =
-      serde_json::from_str(json).expect("Should deserialize simple response");
-    assert_eq!(resp.text, "Hello world");
+  fn test_segment_mode_response_format() {
+    assert_eq!(
+      SegmentMode::VerboseJson.response_format(true),
+      Some("verbose_json")
+    );
+    assert_eq!(
+      SegmentMode::VerboseJson.response_format(false),
+      Some("json")
+    );
+    assert_eq!(SegmentMode::Always.response_format(true), None);
+    assert_eq!(SegmentMode::Unsupported.response_format(true), Some("json"));
+  }
+
+  #[test]
+  fn test_plain_json_parses_without_segments() {
+    let resp: WhisperVerboseResponse =
+      serde_json::from_str(r#"{"text": "你好"}"#).expect("plain json");
+    assert_eq!(resp.text, "你好");
+    assert!(resp.segments.is_empty());
   }
 
   #[test]
