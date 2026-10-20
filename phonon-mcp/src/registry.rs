@@ -38,15 +38,38 @@ impl std::fmt::Display for AudioHandle {
   }
 }
 
+/// Default cap on PCM held by one registry: 1 GiB of `f32` samples.
+pub const DEFAULT_MAX_BYTES: usize = 1 << 30;
+
+#[derive(Debug, Default)]
+struct Store {
+  buffers: HashMap<AudioHandle, Arc<AudioBuffer>>,
+  bytes: usize,
+}
+
+fn pcm_bytes(buffer: &AudioBuffer) -> usize {
+  buffer.samples.len() * std::mem::size_of::<f32>()
+}
+
 /// Thread-safe registry of audio buffers keyed by [`AudioHandle`].
 ///
 /// Cloning the registry yields a handle to the same shared store
 /// (cheap `Arc::clone`). All mutations go through an internal `Mutex`.
-/// A poisoned lock is recovered: every critical section is a single
-/// `HashMap` call, so a panic elsewhere cannot leave the map half-updated.
-#[derive(Debug, Clone, Default)]
+/// A poisoned lock is recovered: every critical section leaves the map and
+/// its byte count consistent before anything that could panic.
+///
+/// Every DSP tool returns a new handle, so the total PCM held is capped;
+/// inserts beyond the cap fail until the client drops handles.
+#[derive(Debug, Clone)]
 pub struct AssetRegistry {
-  inner: Arc<Mutex<HashMap<AudioHandle, Arc<AudioBuffer>>>>,
+  inner: Arc<Mutex<Store>>,
+  max_bytes: usize,
+}
+
+impl Default for AssetRegistry {
+  fn default() -> Self {
+    Self::with_max_bytes(DEFAULT_MAX_BYTES)
+  }
 }
 
 impl AssetRegistry {
@@ -54,45 +77,66 @@ impl AssetRegistry {
     Self::default()
   }
 
-  /// Insert a buffer and return its handle.
-  pub fn insert(&self, buffer: AudioBuffer) -> AudioHandle {
-    let handle = AudioHandle::new();
-    let mut g = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-    g.insert(handle.clone(), Arc::new(buffer));
-    handle
+  /// A registry holding at most `max_bytes` of PCM.
+  pub fn with_max_bytes(max_bytes: usize) -> Self {
+    Self {
+      inner: Arc::default(),
+      max_bytes,
+    }
   }
 
-  /// Insert a buffer with a caller-provided handle, replacing any prior
-  /// entry. Used by tests and for fixed-id assets.
-  pub fn insert_with(&self, handle: AudioHandle, buffer: AudioBuffer) {
+  /// Insert a buffer and return its handle, or [`McpError::RegistryFull`]
+  /// if it would exceed the cap.
+  pub fn insert(&self, buffer: AudioBuffer) -> Result<AudioHandle, McpError> {
+    let size = pcm_bytes(&buffer);
     let mut g = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-    g.insert(handle, Arc::new(buffer));
+    if g.bytes + size > self.max_bytes {
+      return Err(McpError::RegistryFull(format!(
+        "{} MB in use of {} MB, this buffer needs {} MB; free memory with audio_drop",
+        g.bytes >> 20,
+        self.max_bytes >> 20,
+        size.div_ceil(1 << 20)
+      )));
+    }
+    let handle = AudioHandle::new();
+    g.buffers.insert(handle.clone(), Arc::new(buffer));
+    g.bytes += size;
+    Ok(handle)
   }
 
   /// Fetch a buffer by handle.
   pub fn get(&self, handle: &AudioHandle) -> Result<Arc<AudioBuffer>, McpError> {
     let g = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-    g.get(handle)
+    g.buffers
+      .get(handle)
       .cloned()
       .ok_or_else(|| McpError::HandleNotFound(handle.0.clone()))
   }
 
   /// Remove a buffer; returns true if it was present.
   pub fn drop(&self, handle: &AudioHandle) -> bool {
-    let mut g = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-    g.remove(handle).is_some()
+    let removed = {
+      let mut g = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+      let removed = g.buffers.remove(handle);
+      if let Some(buffer) = &removed {
+        g.bytes -= pcm_bytes(buffer);
+      }
+      removed
+    };
+    // The PCM (if no tool still holds it) is freed after unlocking.
+    removed.is_some()
   }
 
   /// List all current handles (in unspecified order).
   pub fn handles(&self) -> Vec<AudioHandle> {
     let g = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-    g.keys().cloned().collect()
+    g.buffers.keys().cloned().collect()
   }
 
   /// Number of buffers currently stored.
   pub fn len(&self) -> usize {
     let g = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-    g.len()
+    g.buffers.len()
   }
 
   pub fn is_empty(&self) -> bool {
@@ -115,7 +159,7 @@ mod tests {
   #[test]
   fn test_insert_and_get_roundtrip() {
     let r = AssetRegistry::new();
-    let h = r.insert(buf());
+    let h = r.insert(buf()).unwrap();
     let got = r.get(&h).unwrap();
     assert_eq!(got.samples.len(), 100);
   }
@@ -123,8 +167,8 @@ mod tests {
   #[test]
   fn test_handles_are_unique() {
     let r = AssetRegistry::new();
-    let h1 = r.insert(buf());
-    let h2 = r.insert(buf());
+    let h1 = r.insert(buf()).unwrap();
+    let h2 = r.insert(buf()).unwrap();
     assert_ne!(h1, h2);
     assert_eq!(r.len(), 2);
   }
@@ -132,7 +176,7 @@ mod tests {
   #[test]
   fn test_drop_removes_entry() {
     let r = AssetRegistry::new();
-    let h = r.insert(buf());
+    let h = r.insert(buf()).unwrap();
     assert!(r.drop(&h));
     assert!(r.get(&h).is_err());
     // double-drop returns false
@@ -145,5 +189,17 @@ mod tests {
     let bogus = AudioHandle("not-a-real-uuid".into());
     let err = r.get(&bogus).unwrap_err();
     assert!(matches!(err, McpError::HandleNotFound(_)));
+  }
+
+  #[test]
+  fn test_insert_beyond_cap_fails_until_dropped() {
+    // Room for exactly two 100-sample buffers.
+    let r = AssetRegistry::with_max_bytes(800);
+    let h1 = r.insert(buf()).unwrap();
+    r.insert(buf()).unwrap();
+    assert!(matches!(r.insert(buf()), Err(McpError::RegistryFull(_))));
+    assert!(r.drop(&h1));
+    r.insert(buf()).unwrap();
+    assert_eq!(r.len(), 2);
   }
 }

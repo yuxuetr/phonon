@@ -36,6 +36,11 @@ Tools that **consume** audio take `"handle": "9b7e…"` (and possibly
 `"a"` / `"b"` for binary ops). When you're done with a buffer call
 `audio_drop` to free the memory.
 
+Every producing tool creates a **new** handle, so the registry caps the PCM
+it holds (1 GiB of `f32` samples by default, `AssetRegistry::with_max_bytes`
+for embedders). Past the cap, producing tools fail with
+`Asset registry full: … free memory with audio_drop` until handles are dropped.
+
 ## Errors
 
 Tool handlers return one of:

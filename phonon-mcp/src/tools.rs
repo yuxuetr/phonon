@@ -195,14 +195,17 @@ struct HandleResult {
   channels: u16,
 }
 
-fn make_handle_result(handle: AudioHandle, buf: &AudioBuffer) -> Value {
-  serde_json::to_value(HandleResult {
+/// Move `buf` into the registry and describe the new handle. The metadata
+/// is read before the move, so no PCM is copied.
+fn store(registry: &AssetRegistry, buf: AudioBuffer) -> Result<Value, McpError> {
+  let (duration_secs, sample_rate, channels) = (buf.duration_secs(), buf.sample_rate, buf.channels);
+  let handle = registry.insert(buf)?;
+  Ok(serde_json::to_value(HandleResult {
     handle,
-    duration_secs: buf.duration_secs(),
-    sample_rate: buf.sample_rate,
-    channels: buf.channels,
-  })
-  .unwrap_or(Value::Null)
+    duration_secs,
+    sample_rate,
+    channels,
+  })?)
 }
 
 // ─── Filesystem sandbox ────────────────────────────────────────────────────
@@ -300,8 +303,7 @@ fn register_audio_load(r: &mut ToolRegistry) {
         serde_json::from_value(args).map_err(|e| McpError::InvalidArgs(e.to_string()))?;
       let path = resolve_for_read(&fs_root, &path)?;
       let buf = phonon_io::read_audio(&path).map_err(McpError::from)?;
-      let handle = registry.insert(buf.clone());
-      Ok(make_handle_result(handle, &buf))
+      store(&registry, buf)
     })
   });
   r.register(Tool {
@@ -437,8 +439,7 @@ fn register_audio_mix(r: &mut ToolRegistry) {
       let ba = registry.get(&a)?;
       let bb = registry.get(&b)?;
       let mixed = phonon_core::mix(&ba, &bb).map_err(McpError::from)?;
-      let handle = registry.insert(mixed.clone());
-      Ok(make_handle_result(handle, &mixed))
+      store(&registry, mixed)
     })
   });
   r.register(Tool {
@@ -469,8 +470,7 @@ fn register_audio_trim(r: &mut ToolRegistry) {
       } = serde_json::from_value(args).map_err(|e| McpError::InvalidArgs(e.to_string()))?;
       let buf = registry.get(&handle)?;
       let trimmed = phonon_core::trim(&buf, start_secs, end_secs).map_err(McpError::from)?;
-      let new_handle = registry.insert(trimmed.clone());
-      Ok(make_handle_result(new_handle, &trimmed))
+      store(&registry, trimmed)
     })
   });
   r.register(Tool {
@@ -511,8 +511,7 @@ fn register_audio_fade(r: &mut ToolRegistry) {
           )));
         }
       }
-      let new_handle = registry.insert(owned.clone());
-      Ok(make_handle_result(new_handle, &owned))
+      store(&registry, owned)
     })
   });
   r.register(Tool {
@@ -543,8 +542,7 @@ fn register_audio_normalize(r: &mut ToolRegistry) {
       let buf = registry.get(&handle)?;
       let mut owned: AudioBuffer = (*buf).clone();
       phonon_core::normalize(&mut owned, target_peak);
-      let new_handle = registry.insert(owned.clone());
-      Ok(make_handle_result(new_handle, &owned))
+      store(&registry, owned)
     })
   });
   r.register(Tool {
@@ -575,8 +573,7 @@ fn register_audio_normalize_lufs(r: &mut ToolRegistry) {
       let buf = registry.get(&handle)?;
       let mut owned: AudioBuffer = (*buf).clone();
       phonon_core::normalize_lufs(&mut owned, target_lufs, true_peak_max_dbtp);
-      let new_handle = registry.insert(owned.clone());
-      Ok(make_handle_result(new_handle, &owned))
+      store(&registry, owned)
     })
   });
   r.register(Tool {
@@ -607,8 +604,7 @@ fn register_audio_volume_db(r: &mut ToolRegistry) {
       let buf = registry.get(&handle)?;
       let mut owned: AudioBuffer = (*buf).clone();
       phonon_core::adjust_volume_db(&mut owned, db);
-      let new_handle = registry.insert(owned.clone());
-      Ok(make_handle_result(new_handle, &owned))
+      store(&registry, owned)
     })
   });
   r.register(Tool {
@@ -644,8 +640,7 @@ fn register_audio_pan(r: &mut ToolRegistry) {
           buf.channels
         )));
       };
-      let new_handle = registry.insert(new_buf.clone());
-      Ok(make_handle_result(new_handle, &new_buf))
+      store(&registry, new_buf)
     })
   });
   r.register(Tool {
@@ -677,8 +672,7 @@ fn register_audio_resample(r: &mut ToolRegistry) {
       } = serde_json::from_value(args).map_err(|e| McpError::InvalidArgs(e.to_string()))?;
       let buf = registry.get(&handle)?;
       let resampled = phonon_core::resample(&buf, target_rate).map_err(McpError::from)?;
-      let new_handle = registry.insert(resampled.clone());
-      Ok(make_handle_result(new_handle, &resampled))
+      store(&registry, resampled)
     })
   });
   r.register(Tool {
@@ -816,7 +810,7 @@ mod tests {
   async fn test_save_rejects_paths_outside_root() {
     let d = dirs();
     let r = ToolRegistry::new(&d.root);
-    let h = r.registry.insert(dummy());
+    let h = r.registry.insert(dummy()).unwrap();
     for path in [
       d.outside.join("x.wav").to_string_lossy().into_owned(),
       "../outside/x.wav".to_string(),
@@ -837,7 +831,7 @@ mod tests {
     let d = dirs();
     write_dummy_wav(&d.root.join("existing.wav"));
     let r = ToolRegistry::new(&d.root);
-    let h = r.registry.insert(dummy());
+    let h = r.registry.insert(dummy()).unwrap();
     let err = r
       .call("audio_save", json!({ "handle": h, "path": "existing.wav" }))
       .await;
@@ -861,7 +855,7 @@ mod tests {
   #[tokio::test]
   async fn test_audio_info_returns_metadata() {
     let r = ToolRegistry::new(std::env::temp_dir());
-    let h = r.registry.insert(dummy());
+    let h = r.registry.insert(dummy()).unwrap();
     let out = r.call("audio_info", json!({ "handle": h })).await.unwrap();
     assert_eq!(out["sample_rate"], 48000);
     assert_eq!(out["channels"], 1);
@@ -871,7 +865,7 @@ mod tests {
   #[tokio::test]
   async fn test_audio_drop_removes() {
     let r = ToolRegistry::new(std::env::temp_dir());
-    let h = r.registry.insert(dummy());
+    let h = r.registry.insert(dummy()).unwrap();
     let out = r.call("audio_drop", json!({ "handle": h })).await.unwrap();
     assert_eq!(out["removed"], true);
   }
@@ -879,7 +873,7 @@ mod tests {
   #[tokio::test]
   async fn test_audio_normalize_returns_new_handle() {
     let r = ToolRegistry::new(std::env::temp_dir());
-    let h = r.registry.insert(dummy());
+    let h = r.registry.insert(dummy()).unwrap();
     let out = r
       .call(
         "audio_normalize",
@@ -894,7 +888,7 @@ mod tests {
   #[tokio::test]
   async fn test_audio_pan_mono_to_stereo() {
     let r = ToolRegistry::new(std::env::temp_dir());
-    let h = r.registry.insert(dummy());
+    let h = r.registry.insert(dummy()).unwrap();
     let out = r
       .call("audio_pan", json!({ "handle": h, "position": -1.0 }))
       .await
@@ -918,7 +912,7 @@ mod tests {
       sample_rate: 48000,
       channels: 1,
     };
-    let h = r.registry.insert(buf);
+    let h = r.registry.insert(buf).unwrap();
     let out = r
       .call("audio_loudness", json!({ "handle": h }))
       .await

@@ -221,7 +221,7 @@ mod tests {
       sample_rate: 48000,
       channels: 1,
     };
-    let h = s.tools.registry.insert(buf);
+    let h = s.tools.registry.insert(buf).unwrap();
     let req = json!({
       "jsonrpc": "2.0",
       "id": 3,
