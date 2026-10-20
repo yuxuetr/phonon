@@ -131,7 +131,8 @@
   - DONE: `transform_audio` / `load_audio` 把处理与 waveform/FFT 放到 `spawn_blocking`;播放前的音量/重采样/声道转换同样移出。仅编译 + clippy 验证,GUI 未手动点测
 - [x] **G6** 管线:`assemble_segments` 的 O(n²) 合并;`generate_episode` 改用并发 TTS(时间轴已按 span 计算,不再需要顺序合成)
   - DONE: 单个预分配 Vec 内追加 + 原地交叉淡化(与旧实现逐样本对拍);`synthesize_segments()` 供两个入口共用并发合成
-- [ ] **G7** LUFS 真峰值相位偏移(0.375/0.625/0.875 → 0.25/0.5/0.75)
+- [x] **G7** LUFS 真峰值相位偏移(0.375/0.625/0.875 → 0.25/0.5/0.75)
+  - DONE: sinc/窗中心改为 24;fs/4 中点 ISP 0.99 由 0.9766 (−0.12 dB 低读) → 0.9959
 - [ ] **G8** AAC 结束时未 flush 编码器尾部;`read_audio` 遇单个坏包即整体失败(应跳过 DecodeError)
 - [ ] **G9** MCP:`AssetRegistry` 无容量上限;每个工具调用整块 clone PCM 只为构造元数据
 - [ ] **G10** Replicate 轮询 / 下载未检查 HTTP 状态码;ElevenLabs `voice_id` 未转义直接拼进 URL
