@@ -1,7 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use phonon_core::AudioBuffer;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use thiserror::Error;
 use tracing::{error, info, instrument};
 
@@ -35,12 +35,15 @@ pub enum PlaybackState {
 
 /// Shared state between the audio thread and the control API.
 ///
-/// The audio callback only ever `try_lock`s the mutexes, so it never waits
-/// on the control thread; control methods keep their critical sections to
-/// a swap or push and do allocation/deallocation outside the lock.
+/// The audio callback only ever `try_lock`s / `try_read`s, so it never
+/// waits on the control thread; control methods keep their exclusive
+/// sections to a swap or push and do allocation/deallocation outside them.
 struct SharedState {
   /// Audio samples buffer (the complete track).
-  samples: Mutex<Vec<f32>>,
+  samples: RwLock<Vec<f32>>,
+  /// Serializes control-thread writers of `samples`, so `append` can copy
+  /// under a shared read lock without another writer slipping in.
+  samples_writer: Mutex<()>,
   /// Current playback position (sample index).
   position: AtomicUsize,
   /// Total number of samples.
@@ -66,7 +69,8 @@ use std::sync::atomic::AtomicU32;
 impl SharedState {
   fn new(sample_rate: u32, channels: u16) -> Self {
     Self {
-      samples: Mutex::new(Vec::new()),
+      samples: RwLock::new(Vec::new()),
+      samples_writer: Mutex::new(()),
       position: AtomicUsize::new(0),
       total_samples: AtomicUsize::new(0),
       paused: AtomicBool::new(false),
@@ -171,20 +175,7 @@ impl AudioPlayer {
     info!("Loading audio for playback");
 
     // Copy outside the lock; swap inside; free the old track after unlocking.
-    let new_samples = buffer.samples.clone();
-    let _old_samples = {
-      let mut samples = self
-        .state
-        .samples
-        .lock()
-        .map_err(|e| EngineError::Play(format!("Lock poisoned: {e}")))?;
-      std::mem::replace(&mut *samples, new_samples)
-    };
-
-    self
-      .state
-      .total_samples
-      .store(buffer.samples.len(), Ordering::SeqCst);
+    let _old_samples = self.state.replace_samples(buffer.samples.clone())?;
     self.state.position.store(0, Ordering::SeqCst);
     self.state.paused.store(false, Ordering::SeqCst);
     self.state.active.store(true, Ordering::SeqCst);
@@ -294,18 +285,7 @@ impl AudioPlayer {
       return Ok(());
     }
 
-    {
-      let mut samples = self
-        .state
-        .samples
-        .lock()
-        .map_err(|e| EngineError::Play(format!("Lock poisoned: {e}")))?;
-      samples.extend_from_slice(new_samples);
-      self
-        .state
-        .total_samples
-        .store(samples.len(), Ordering::SeqCst);
-    }
+    self.state.append(new_samples)?;
 
     // Enable streaming mode and auto-activate
     self.state.streaming.store(true, Ordering::SeqCst);
@@ -328,13 +308,8 @@ impl AudioPlayer {
   /// Clears the loaded audio buffer.
   pub fn clear(&self) {
     self.stop();
-    // Take the Vec out so it is freed after the lock is released.
-    let _old_samples = self
-      .state
-      .samples
-      .lock()
-      .map(|mut s| std::mem::take(&mut *s));
-    self.state.total_samples.store(0, Ordering::SeqCst);
+    // The old track is freed after the lock is released.
+    let _old_samples = self.state.replace_samples(Vec::new());
   }
 
   /// Adds a [`phonon_core::DspPlugin`] to the playback effect chain.
@@ -368,6 +343,63 @@ impl AudioPlayer {
   }
 }
 
+impl SharedState {
+  /// Replace the whole track, returning the old one so the caller frees
+  /// it after every lock is released.
+  fn replace_samples(&self, new_samples: Vec<f32>) -> Result<Vec<f32>> {
+    let _writer = self
+      .samples_writer
+      .lock()
+      .map_err(|e| EngineError::Play(format!("Lock poisoned: {e}")))?;
+    let len = new_samples.len();
+    let old = {
+      let mut samples = self
+        .samples
+        .write()
+        .map_err(|e| EngineError::Play(format!("Lock poisoned: {e}")))?;
+      std::mem::replace(&mut *samples, new_samples)
+    };
+    self.total_samples.store(len, Ordering::SeqCst);
+    Ok(old)
+  }
+
+  /// Append to the track. When the allocation must grow, the existing
+  /// samples are copied into a larger one under a *read* lock (the audio
+  /// callback keeps playing) and only the pointer swap takes the write
+  /// lock; copying a long stream under the write lock silences playback
+  /// for the duration of the copy.
+  fn append(&self, new_samples: &[f32]) -> Result<()> {
+    let poisoned = |e: &dyn std::fmt::Display| EngineError::Play(format!("Lock poisoned: {e}"));
+    let _writer = self.samples_writer.lock().map_err(|e| poisoned(&e))?;
+
+    let grown = {
+      let samples = self.samples.read().map_err(|e| poisoned(&e))?;
+      let needed = samples.len() + new_samples.len();
+      (needed > samples.capacity()).then(|| {
+        let mut grown = Vec::with_capacity(needed.max(samples.capacity() * 2));
+        grown.extend_from_slice(&samples);
+        grown.extend_from_slice(new_samples);
+        grown
+      })
+    };
+
+    let _old = {
+      let mut samples = self.samples.write().map_err(|e| poisoned(&e))?;
+      let old = match grown {
+        Some(grown) => Some(std::mem::replace(&mut *samples, grown)),
+        // Fits in the spare capacity: no allocation under the lock.
+        None => {
+          samples.extend_from_slice(new_samples);
+          None
+        }
+      };
+      self.total_samples.store(samples.len(), Ordering::SeqCst);
+      old
+    };
+    Ok(())
+  }
+}
+
 /// Interleaved sample index for `secs`, clamped to `total` and rounded down
 /// to a frame boundary (a mid-frame position would swap channels).
 fn seek_index(secs: f64, sample_rate: u32, channels: u16, total: usize) -> usize {
@@ -390,7 +422,7 @@ fn write_data(output: &mut [f32], state: &SharedState) {
   let volume = state.volume();
   // Never wait on the control thread: if it holds the lock (or it is
   // poisoned), output silence for this block without advancing.
-  let Ok(samples) = state.samples.try_lock() else {
+  let Ok(samples) = state.samples.try_read() else {
     output.fill(0.0);
     return;
   };
@@ -435,7 +467,7 @@ mod tests {
   fn loaded_state(samples: Vec<f32>) -> SharedState {
     let state = SharedState::new(48_000, 2);
     state.total_samples.store(samples.len(), Ordering::SeqCst);
-    if let Ok(mut s) = state.samples.lock() {
+    if let Ok(mut s) = state.samples.write() {
       *s = samples;
     }
     state.active.store(true, Ordering::SeqCst);
@@ -461,7 +493,7 @@ mod tests {
     let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
     // Control thread holds the sample lock until told to release it.
     let holder = std::thread::spawn(move || {
-      let _guard = guard_state.samples.lock();
+      let _guard = guard_state.samples.write();
       let _ = locked_tx.send(());
       let _ = release_rx.recv();
     });
@@ -491,6 +523,38 @@ mod tests {
       assert!(out.iter().all(|&s| (s - 0.5).abs() < 1e-6));
     });
     assert!(done, "audio callback blocked on the effect-chain lock");
+  }
+
+  #[test]
+  fn test_append_preserves_order_across_growth() {
+    let state = SharedState::new(48_000, 1);
+    let mut expected = Vec::new();
+    for chunk in 0..200 {
+      let data: Vec<f32> = (0..37).map(|i| (chunk * 37 + i) as f32).collect();
+      state.append(&data).unwrap();
+      expected.extend_from_slice(&data);
+    }
+    assert_eq!(*state.samples.read().unwrap(), expected);
+    assert_eq!(state.total_samples.load(Ordering::SeqCst), expected.len());
+  }
+
+  #[test]
+  fn test_concurrent_appends_lose_nothing() {
+    let state = Arc::new(SharedState::new(48_000, 1));
+    let writers: Vec<_> = (0..4)
+      .map(|_| {
+        let state = state.clone();
+        std::thread::spawn(move || {
+          for _ in 0..500 {
+            state.append(&[1.0; 13]).unwrap();
+          }
+        })
+      })
+      .collect();
+    for w in writers {
+      w.join().unwrap();
+    }
+    assert_eq!(state.samples.read().unwrap().len(), 4 * 500 * 13);
   }
 
   #[test]
