@@ -99,7 +99,7 @@
 - [x] **F3** MCP 路径沙箱:`PHONON_MCP_ROOT` 限定 load/save 根目录;registry 去掉 `expect` ✅ (另加 audio_save overwrite 保护)
 
 ### P1 — 结果错误
-- [ ] **F4** 管线:BGM 为空死循环;章节/SRT 计入 intro 与 crossfade
+- [x] **F4** 管线:BGM 为空死循环;章节/SRT 计入 intro 与 crossfade ✅
 - [ ] **F5** Whisper `TranscribeOptions::default()` 默认开启 timestamps
 - [ ] **F6** 重采样降采样时核支撑按 ratio 扩展
 - [ ] **F7** SIMD 在非 x86_64/aarch64 架构的标量 fallback
