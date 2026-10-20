@@ -152,8 +152,9 @@
 - [x] **H2** `LowPassPlugin` / `HighPassPlugin` 状态固定 2 声道,第 3 声道起原样通过
   - 做法:状态按声道数分配,格式变化时重置
   - DONE: 状态改为按声道数的 Vec(声道数变化时重建);3 声道测试中第 3 声道的 Nyquist 残留 0.5 → <0.1
-- [ ] **H3** 字节解码五份复制(4 个 TTS provider + Replicate + server),每份都先写临时文件再读
+- [x] **H3** 字节解码五份复制(4 个 TTS provider + Replicate + server),每份都先写临时文件再读
   - 做法:phonon-io 增加 `decode_audio(bytes, ext_hint)`,内存解码;`read_audio` 共用同一解码循环
+  - DONE: `decode_audio` 与 `read_audio` 共用 `decode()`;wav/mp3/flac/ogg 四种格式字节解码与文件读取逐样本一致;6 处副本删除,Edge 联网测试通过
 - [ ] **H4** `filters::filter()` 自带一份与 `ParametricEq` 相同的 DF-I biquad 循环
   - 做法:`filter()` 改为单频段 `ParametricEq`
 - [ ] **H5** `OpenAiScriptGenerator` 不走 G2 的重试(429 / 5xx 直接失败),且 LLM 错误被归为 `PodcastError::Tts`
