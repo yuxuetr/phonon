@@ -171,3 +171,9 @@
   重估条件:`grep -rn "phonon_wav::read_wav" --include='*.rs' . | grep -v cache.rs` 有输出
 - **AI trait RPITIT → dyn**:server 仍只用 Edge TTS(无需 API key)。重估条件:server 需要按请求或配置切换 provider
 - **server 限流**:默认只监听 127.0.0.1。重估条件:默认监听地址改为非回环,或文档推荐公网部署
+
+## v0.7.4 — 依赖收敛
+
+- [ ] **I1** reqwest 0.12 与 0.13 并存:phonon-ai / phonon-podcast 用 0.12,msedge-tts 0.4 依赖 0.13,两套 HTTP/TLS 栈都要编译
+  - 做法:workspace 的 reqwest 升到 0.13,补齐 0.13 中改为可选的 feature;0.13 默认 TLS 为 rustls(0.12 为 native-tls),用联网 Edge TTS 测试与本地服务器测试验证
+  - 验收:`cargo tree -d -e normal | grep -c '^reqwest'` 为 0
