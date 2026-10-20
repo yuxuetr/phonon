@@ -155,8 +155,9 @@
 - [x] **H3** 字节解码五份复制(4 个 TTS provider + Replicate + server),每份都先写临时文件再读
   - 做法:phonon-io 增加 `decode_audio(bytes, ext_hint)`,内存解码;`read_audio` 共用同一解码循环
   - DONE: `decode_audio` 与 `read_audio` 共用 `decode()`;wav/mp3/flac/ogg 四种格式字节解码与文件读取逐样本一致;6 处副本删除,Edge 联网测试通过
-- [ ] **H4** `filters::filter()` 自带一份与 `ParametricEq` 相同的 DF-I biquad 循环
+- [x] **H4** `filters::filter()` 自带一份与 `ParametricEq` 相同的 DF-I biquad 循环
   - 做法:`filter()` 改为单频段 `ParametricEq`
+  - DONE: `filter()` 构造单频段 `ParametricEq`,删 40 行;3 种滤波器、3 声道输入下与旧循环逐位一致
 - [ ] **H5** `OpenAiScriptGenerator` 不走 G2 的重试(429 / 5xx 直接失败),且 LLM 错误被归为 `PodcastError::Tts`
   - 做法:公开 `phonon_ai::retry_transient` 并在脚本生成中使用;错误归为 `Script`
 - [ ] **H6** phonon-cli 声明了未使用的 phonon-wav 依赖
