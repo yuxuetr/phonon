@@ -45,8 +45,11 @@ pub fn resample_sinc(
   let new_frames = (old_frames as f64 / ratio).ceil() as usize;
   let a = quality.max(1);
 
-  // When downsampling, we need to scale the sinc filter to avoid aliasing
+  // When downsampling, the sinc is stretched by `ratio` so its cutoff sits
+  // at the new Nyquist; its support grows by the same factor, so the window
+  // must cover ±a·ratio source frames or the filter is truncated.
   let filter_scale = if ratio > 1.0 { 1.0 / ratio } else { 1.0 };
+  let half_width = a as f64 / filter_scale;
 
   /// Minimum output frame count before engaging parallel processing.
   #[cfg(feature = "parallel")]
@@ -57,14 +60,12 @@ pub fn resample_sinc(
   // Compute one output frame (ch samples) into `out`.
   let compute_frame = |i: usize, out: &mut [f32]| {
     let src_pos = i as f64 * ratio;
-    let src_floor = src_pos.floor() as i64;
+    let j_start = (src_pos - half_width).ceil() as i64;
+    let j_end = (src_pos + half_width).floor() as i64;
 
     for c in 0..ch {
       let mut sum = 0.0f64;
       let mut weight_sum = 0.0f64;
-
-      let j_start = src_floor - a as i64 + 1;
-      let j_end = src_floor + a as i64;
 
       for j in j_start..=j_end {
         if j < 0 || j >= old_frames as i64 {
@@ -298,6 +299,43 @@ mod tests {
       sinc_err < lin_err,
       "Sinc RMS error ({sinc_err:.6}) should be lower than linear ({lin_err:.6})"
     );
+  }
+
+  fn tone(freq: f64, sample_rate: u32, secs: f64) -> AudioBuffer {
+    let n = (sample_rate as f64 * secs) as usize;
+    AudioBuffer {
+      samples: (0..n)
+        .map(|i| {
+          (2.0 * std::f64::consts::PI * freq * i as f64 / sample_rate as f64).sin() as f32 * 0.5
+        })
+        .collect(),
+      sample_rate,
+      channels: 1,
+    }
+  }
+
+  /// RMS of the middle half, skipping edge transients.
+  fn mid_rms(samples: &[f32]) -> f64 {
+    let mid = &samples[samples.len() / 4..samples.len() * 3 / 4];
+    (mid.iter().map(|&s| (s as f64).powi(2)).sum::<f64>() / mid.len() as f64).sqrt()
+  }
+
+  #[test]
+  fn test_downsample_rejects_content_above_new_nyquist() {
+    // 10 kHz is above the 8 kHz Nyquist of the 16 kHz target and aliases
+    // to 6 kHz. A filter truncated to ±a source frames leaked ≈ -26 dB here.
+    let input = tone(10_000.0, 48_000, 0.5);
+    let out = resample(&input, 16_000).unwrap();
+    let ratio_db = 20.0 * (mid_rms(&out.samples) / mid_rms(&input.samples)).log10();
+    assert!(ratio_db < -60.0, "stopband leakage {ratio_db:.1} dB");
+  }
+
+  #[test]
+  fn test_downsample_preserves_passband() {
+    let input = tone(1_000.0, 48_000, 0.5);
+    let out = resample(&input, 16_000).unwrap();
+    let ratio_db = 20.0 * (mid_rms(&out.samples) / mid_rms(&input.samples)).log10();
+    assert!(ratio_db.abs() < 0.1, "passband gain {ratio_db:.3} dB");
   }
 
   #[test]
