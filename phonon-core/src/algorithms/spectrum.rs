@@ -16,11 +16,11 @@ use rustfft::num_complex::Complex;
 /// and contains the magnitude of each frequency bin.
 /// The size of the FFT is the next power of two of the buffer length.
 pub fn compute_spectrum(buffer: &AudioBuffer) -> Result<Vec<Vec<f32>>> {
+  let channels = buffer.frame_stride()?;
   if buffer.samples.is_empty() {
     return Ok(vec![]);
   }
 
-  let channels = buffer.channels as usize;
   let frames = buffer.samples.len() / channels;
 
   // Use next power of 2 for efficiency, or just use length if we don't care about zero padding.
@@ -73,6 +73,16 @@ pub fn compute_spectrum(buffer: &AudioBuffer) -> Result<Vec<Vec<f32>>> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn test_spectrum_zero_channels_errors() {
+    let buffer = AudioBuffer {
+      samples: vec![0.1; 8],
+      sample_rate: 8_000,
+      channels: 0,
+    };
+    assert!(compute_spectrum(&buffer).is_err());
+  }
 
   #[test]
   fn test_spectrum_pure_tone() {

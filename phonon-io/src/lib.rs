@@ -84,6 +84,9 @@ pub fn read_audio<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
 
   // Store the track identifier, it will be used to filter packets.
   let track_id = track.id;
+  // Declared format, used when no packet decodes (e.g. a header-only WAV).
+  let declared_rate = track.codec_params.sample_rate;
+  let declared_channels = track.codec_params.channels.map(|c| c.count() as u16);
 
   let mut samples: Vec<f32> = Vec::new();
   let mut sample_rate = 0;
@@ -132,6 +135,20 @@ pub fn read_audio<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
       Err(Error::IoError(e)) => return Err(PhononError::Io(e)),
       Err(Error::DecodeError(e)) => return Err(PhononError::Wav(format!("Decode error: {}", e))),
       Err(e) => return Err(PhononError::Wav(format!("Unhandled decode error: {}", e))),
+    }
+  }
+
+  if sample_rate == 0 || channels == 0 {
+    match (declared_rate, declared_channels) {
+      (Some(rate), Some(ch)) if rate > 0 && ch > 0 => {
+        sample_rate = rate;
+        channels = ch;
+      }
+      _ => {
+        return Err(PhononError::Wav(
+          "No audio decoded and the track declares no sample rate / channel layout".to_string(),
+        ));
+      }
     }
   }
 
@@ -211,4 +228,20 @@ pub fn write_mp3_with_config<P: AsRef<Path>>(
   config: &Mp3Config,
 ) -> Result<()> {
   mp3::write_mp3(path, buffer, config)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_read_empty_wav_keeps_declared_format() -> Result<()> {
+    let path = std::env::temp_dir().join("phonon_io_empty_stereo.wav");
+    write_audio(&path, &AudioBuffer::new(48_000, 2, 0))?;
+    let loaded = read_audio(&path)?;
+    assert!(loaded.samples.is_empty());
+    assert_eq!(loaded.sample_rate, 48_000);
+    assert_eq!(loaded.channels, 2);
+    Ok(())
+  }
 }

@@ -29,6 +29,7 @@ pub fn resample_sinc(
   target_sample_rate: u32,
   quality: usize,
 ) -> Result<AudioBuffer> {
+  let ch = buffer.frame_stride()?;
   if target_sample_rate == 0 {
     return Err(PhononError::InvalidSampleRate(0));
   }
@@ -39,7 +40,6 @@ pub fn resample_sinc(
     return Ok(AudioBuffer::new(target_sample_rate, buffer.channels, 0));
   }
 
-  let ch = buffer.channels as usize;
   let ratio = buffer.sample_rate as f64 / target_sample_rate as f64;
   let old_frames = buffer.samples.len() / ch;
   let new_frames = (old_frames as f64 / ratio).ceil() as usize;
@@ -114,6 +114,7 @@ pub fn resample_sinc(
 ///
 /// Kept for backward compatibility and for cases where speed matters more than quality.
 pub fn resample_linear(buffer: &AudioBuffer, target_sample_rate: u32) -> Result<AudioBuffer> {
+  let ch = buffer.frame_stride()?;
   if target_sample_rate == 0 {
     return Err(PhononError::InvalidSampleRate(0));
   }
@@ -125,7 +126,7 @@ pub fn resample_linear(buffer: &AudioBuffer, target_sample_rate: u32) -> Result<
   }
 
   let ratio = buffer.sample_rate as f64 / target_sample_rate as f64;
-  let old_len = buffer.samples.len() / buffer.channels as usize;
+  let old_len = buffer.samples.len() / ch;
   let new_len = (old_len as f64 / ratio).ceil() as usize;
 
   let mut new_samples = Vec::with_capacity(new_len * buffer.channels as usize);
@@ -336,6 +337,17 @@ mod tests {
     let out = resample(&input, 16_000).unwrap();
     let ratio_db = 20.0 * (mid_rms(&out.samples) / mid_rms(&input.samples)).log10();
     assert!(ratio_db.abs() < 0.1, "passband gain {ratio_db:.3} dB");
+  }
+
+  #[test]
+  fn test_resample_zero_channels_errors() {
+    let buffer = AudioBuffer {
+      samples: vec![0.1; 8],
+      sample_rate: 8_000,
+      channels: 0,
+    };
+    assert!(resample(&buffer, 16_000).is_err());
+    assert!(resample_linear(&buffer, 16_000).is_err());
   }
 
   #[test]

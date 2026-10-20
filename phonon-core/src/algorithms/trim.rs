@@ -29,6 +29,7 @@ use crate::{AudioBuffer, PhononError, Result};
 /// assert_eq!(trimmed.samples.len(), 50);
 /// ```
 pub fn trim(buffer: &AudioBuffer, start_secs: f64, end_secs: f64) -> Result<AudioBuffer> {
+  let ch = buffer.frame_stride()?;
   if start_secs < 0.0 || end_secs < 0.0 {
     return Err(PhononError::Wav("Time cannot be negative".to_string()));
   }
@@ -41,11 +42,11 @@ pub fn trim(buffer: &AudioBuffer, start_secs: f64, end_secs: f64) -> Result<Audi
   // Calculate start index aligned to channels
   let mut start_idx = (start_secs * samples_per_sec) as usize;
   // Align to frame boundary to avoid channel swapping
-  start_idx -= start_idx % buffer.channels as usize;
+  start_idx -= start_idx % ch;
 
   // Calculate end index aligned to channels
   let mut end_idx = (end_secs * samples_per_sec) as usize;
-  end_idx -= end_idx % buffer.channels as usize;
+  end_idx -= end_idx % ch;
 
   // Clamp to buffer bounds
   let len = buffer.samples.len();
@@ -68,6 +69,16 @@ pub fn trim(buffer: &AudioBuffer, start_secs: f64, end_secs: f64) -> Result<Audi
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn test_trim_zero_channels_errors() {
+    let buffer = AudioBuffer {
+      samples: vec![0.1; 8],
+      sample_rate: 8_000,
+      channels: 0,
+    };
+    assert!(trim(&buffer, 0.0, 0.5).is_err());
+  }
 
   #[test]
   fn test_trim() {

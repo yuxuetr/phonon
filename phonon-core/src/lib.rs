@@ -99,6 +99,17 @@ impl AudioBuffer {
     }
     (self.samples.len() as f64) / (self.channels as f64 * self.sample_rate as f64)
   }
+
+  /// Channel count as a frame stride, rejecting `channels == 0` (fields are
+  /// public, so a zero-channel buffer can be constructed directly).
+  pub(crate) fn frame_stride(&self) -> Result<usize> {
+    match self.channels {
+      0 => Err(PhononError::InvalidParam(
+        "buffer has 0 channels".to_string(),
+      )),
+      ch => Ok(ch as usize),
+    }
+  }
 }
 
 #[cfg(test)]
