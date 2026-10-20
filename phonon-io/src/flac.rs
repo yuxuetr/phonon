@@ -74,9 +74,21 @@ pub fn write_flac<P: AsRef<Path>>(
     buffer.sample_rate as usize,
   );
 
-  let flac_stream =
+  let mut flac_stream =
     flacenc::encode_with_fixed_block_size(&enc_config, source, enc_config.block_size)
       .map_err(|e| PhononError::Wav(format!("FLAC encode error: {e}")))?;
+
+  // flacenc counts the short final block as the stream's minimum block
+  // size; the spec excludes the last block, and symphonia refuses to open
+  // such a fixed-block stream ("end of stream"). Multi-frame streams use
+  // exactly `block_size` everywhere else.
+  let block_size = enc_config.block_size;
+  if flac_stream.stream_info().max_block_size() == block_size {
+    flac_stream
+      .stream_info_mut()
+      .set_block_sizes(block_size, block_size)
+      .map_err(|e| PhononError::Wav(format!("FLAC stream info error: {e:?}")))?;
+  }
 
   // Write encoded stream to bytes
   let mut sink = ByteSink::new();
@@ -101,6 +113,33 @@ mod tests {
     let data = std::fs::read(path).map_err(PhononError::Io)?;
     assert!(data.len() > 4, "FLAC file too small");
     assert_eq!(&data[..4], b"fLaC", "Missing FLAC magic bytes");
+    Ok(())
+  }
+
+  #[test]
+  fn test_write_flac_reads_back() -> Result<()> {
+    // 2 s is not a multiple of the 4096-sample block, so the last block is
+    // short, which is the case symphonia rejected.
+    for channels in [1u16, 2] {
+      let frames = 88_200usize;
+      let buffer = AudioBuffer {
+        samples: (0..frames * channels as usize)
+          .map(|i| ((i / channels as usize) as f32 * 0.0627).sin() * 0.5)
+          .collect(),
+        sample_rate: 44_100,
+        channels,
+      };
+      let tmp = std::env::temp_dir().join(format!("phonon_test_readback_{channels}.flac"));
+      write_flac(&tmp, &buffer, &FlacConfig::default())?;
+      let decoded = crate::read_audio(&tmp);
+      let _ = std::fs::remove_file(&tmp);
+      let decoded = decoded?;
+      assert_eq!(decoded.channels, channels);
+      assert_eq!(decoded.samples.len(), buffer.samples.len());
+      for (a, b) in decoded.samples.iter().zip(&buffer.samples) {
+        assert!((a - b).abs() < 1e-3, "{a} vs {b}");
+      }
+    }
     Ok(())
   }
 
