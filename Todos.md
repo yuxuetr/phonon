@@ -113,3 +113,18 @@
 - [x] **F13** 效果抽象收敛:删 phonon-plugin、deprecated 包装、`EffectAsPlugin` ✅ (同时删 AudioEffect/add_effect,EffectChain 直接持有 DspPlugin)
 - [x] **F14** phonon-io 编码器 feature 开关(aac 默认关)+ docs.rs 元数据 ✅ (只给 aac 加 feature;mp3/flac/ogg 暂无关闭需求,README 注明 LAME LGPL)
 - [x] **F15** 文档同步(AGENTS / README / RoadMap / CHANGELOG 0.7) ✅ (CHANGELOG 加手写 v0.7.1 段;v0.6/v0.7 tag 未打,需维护者决定发布点)
+
+## v0.7.2 — 评估遗留 (待排期)
+
+> 来源同 [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md),v0.7.1 未覆盖的部分。
+
+- [ ] **G1** async 中的阻塞工作改 `spawn_blocking`(server 编码/解码/LUFS、pipeline 重采样与合并、各 provider 的 symphonia 解码、MCP DSP 工具)
+- [ ] **G2** Edge TTS 连接/合成超时;MiniMax 限流与 Replicate 轮询的重试 + 退避;`HttpClient` 加 `connect_timeout`
+- [ ] **G3** 测试中 `unsafe { env::remove_var }` 改为不依赖进程环境的构造方式(并行测试竞争)
+- [ ] **G4** 引擎:`append_samples` 不在锁内扩容;`ParametricEqPlugin` 不在 `process` 内重建 / 分配
+- [ ] **G5** Studio:EQ / 效果 / 播放前重采样 / 整轨 FFT 移出 UI 线程
+- [ ] **G6** 管线:`assemble_segments` 的 O(n²) 合并;`generate_episode` 改用并发 TTS(时间轴已按 span 计算,不再需要顺序合成)
+- [ ] **G7** LUFS 真峰值相位偏移(0.375/0.625/0.875 → 0.25/0.5/0.75)
+- [ ] **G8** AAC 结束时未 flush 编码器尾部;`read_audio` 遇单个坏包即整体失败(应跳过 DecodeError)
+- [ ] **G9** MCP:`AssetRegistry` 无容量上限;每个工具调用整块 clone PCM 只为构造元数据
+- [ ] **G10** Replicate 轮询 / 下载未检查 HTTP 状态码;ElevenLabs `voice_id` 未转义直接拼进 URL
