@@ -111,6 +111,7 @@ impl BandState {
 pub struct ParametricEq {
   bands: Vec<BandState>,
   channels: usize,
+  sample_rate: f64,
 }
 
 impl ParametricEq {
@@ -132,6 +133,22 @@ impl ParametricEq {
     Self {
       bands: band_states,
       channels: ch,
+      sample_rate: sr,
+    }
+  }
+
+  /// Replaces band `index`'s settings in place, keeping its filter state,
+  /// so a live parameter change neither allocates nor clicks. Indices out
+  /// of range are ignored.
+  pub fn set_band(&mut self, index: usize, band: &EqBand) {
+    if let Some(state) = self.bands.get_mut(index) {
+      state.coeffs = calculate_coefficients(
+        band.filter_type,
+        band.freq_hz,
+        self.sample_rate,
+        band.q,
+        band.gain_db,
+      );
     }
   }
 

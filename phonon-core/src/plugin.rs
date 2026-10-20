@@ -465,17 +465,22 @@ impl ParametricEqPlugin {
     }
   }
 
+  fn band(index: usize, gain_db: f32) -> crate::EqBand {
+    crate::EqBand {
+      filter_type: crate::FilterType::Peaking,
+      freq_hz: Self::FREQ[index],
+      q: Self::Q,
+      gain_db: gain_db as f64,
+    }
+  }
+
+  /// Full rebuild; allocates, so only for the first block or a format change.
   fn rebuild(&mut self, sample_rate: u32, channels: u16) {
-    let bands: Vec<crate::EqBand> = self
+    let bands = self
       .params
       .iter()
       .enumerate()
-      .map(|(i, p)| crate::EqBand {
-        filter_type: crate::FilterType::Peaking,
-        freq_hz: Self::FREQ[i],
-        q: Self::Q,
-        gain_db: p.current as f64,
-      })
+      .map(|(i, p)| Self::band(i, p.current))
       .collect();
     self.eq = Some(crate::ParametricEq::new(bands, sample_rate, channels));
     self.last_sample_rate = sample_rate;
@@ -509,12 +514,17 @@ impl DspPlugin for ParametricEqPlugin {
     find_param(&self.params, name)
   }
   fn process(&mut self, samples: &mut [f32], sample_rate: u32, channels: u16) {
-    if self.dirty
-      || self.eq.is_none()
-      || sample_rate != self.last_sample_rate
-      || channels != self.last_channels
-    {
-      self.rebuild(sample_rate, channels);
+    match &mut self.eq {
+      Some(eq) if sample_rate == self.last_sample_rate && channels == self.last_channels => {
+        // Parameter change: new coefficients, same filter state.
+        if self.dirty {
+          for (i, p) in self.params.iter().enumerate() {
+            eq.set_band(i, &Self::band(i, p.current));
+          }
+          self.dirty = false;
+        }
+      }
+      _ => self.rebuild(sample_rate, channels),
     }
     if let Some(eq) = &mut self.eq {
       eq.process(samples);
@@ -540,6 +550,32 @@ pub fn apply_plugin(plugin: &mut dyn DspPlugin, buffer: &mut AudioBuffer) {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn test_eq_parameter_change_keeps_filter_state() {
+    let signal: Vec<f32> = (0..2_000).map(|i| (i as f32 * 0.07).sin() * 0.5).collect();
+    let boosted = || {
+      let mut eq = ParametricEqPlugin::new();
+      eq.set_parameter("band_1_gain", 6.0).unwrap();
+      eq
+    };
+
+    let mut whole = signal.clone();
+    boosted().process(&mut whole, 48_000, 1);
+
+    let mut eq = boosted();
+
+    // Same settings, but a (no-op) parameter write between two blocks.
+    let mut split = signal;
+    let (a, b) = split.split_at_mut(1_000);
+    eq.process(a, 48_000, 1);
+    eq.set_parameter("band_1_gain", 6.0).unwrap();
+    eq.process(b, 48_000, 1);
+
+    for (x, y) in whole.iter().zip(&split) {
+      assert!((x - y).abs() < 1e-6, "filter state was reset: {x} vs {y}");
+    }
+  }
 
   #[test]
   fn test_compressor_plugin_stereo_dynamics_match_mono() {
