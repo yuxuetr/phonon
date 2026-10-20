@@ -381,22 +381,24 @@ const TP_PHASES: usize = 4;
 /// Hamming-windowed sinc, 4 phases × 12 taps; total 48 taps spanning
 /// 12 input samples per output set. Each phase is normalized to unity DC gain
 /// so a constant input produces a constant output across all sub-sample positions.
+///
+/// Phase `p` interpolates at `p / 4` of a sample past the current one: the
+/// sinc is centred on tap 6 of phase 0, which therefore reduces to the
+/// sample itself (`true_peak` skips it and uses the raw sample).
 fn tp_kernels() -> [[f64; TP_TAPS_PER_PHASE]; TP_PHASES] {
   let mut out = [[0.0; TP_TAPS_PER_PHASE]; TP_PHASES];
-  let total = TP_PHASES * TP_TAPS_PER_PHASE;
-  let center = (total as f64 - 1.0) / 2.0;
+  let center = (TP_PHASES * TP_TAPS_PER_PHASE / 2) as f64;
   for (phase, taps) in out.iter_mut().enumerate() {
     for (tap, coeff) in taps.iter_mut().enumerate() {
-      let n = (tap * TP_PHASES + phase) as f64;
-      let x = n - center;
+      let x = (tap * TP_PHASES + phase) as f64 - center;
       let arg = PI * x / TP_PHASES as f64;
       let sinc = if x.abs() < 1e-12 {
         1.0
       } else {
         arg.sin() / arg
       };
-      // Hamming window over [0, total-1].
-      let win = 0.54 - 0.46 * (2.0 * PI * n / (total as f64 - 1.0)).cos();
+      // Hamming window centred on the sinc, spanning ±center.
+      let win = 0.54 + 0.46 * (PI * x / center).cos();
       *coeff = sinc * win;
     }
   }
@@ -699,6 +701,25 @@ mod tests {
       tp,
       sample_peak
     );
+  }
+
+  #[test]
+  fn test_true_peak_finds_midpoint_isp() {
+    // fs/4 sine at phase π/4: samples sit at ±0.70, the 0.99 peaks fall
+    // exactly halfway between samples (oversampled phase 2 of 4).
+    let samples: Vec<f32> = (0..4096)
+      .map(|i| 0.99 * (PI_F32 / 2.0 * i as f32 + PI_F32 / 4.0).sin())
+      .collect();
+    let buf = AudioBuffer {
+      samples,
+      sample_rate: 48_000,
+      channels: 1,
+    };
+    let tp = true_peak(&buf);
+    // Under-reading lets inter-sample overs through a -1 dBTP ceiling, so
+    // allow none of it; the filter's passband ripple may over-read slightly.
+    assert!(tp >= 0.99 - 0.002, "true peak under-read: {tp}");
+    assert!(tp <= 0.99 * 1.01, "true peak over-read: {tp}");
   }
 
   #[test]
