@@ -71,11 +71,11 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
   /// 4. Add intro/outro if configured
   /// 5. Mix with BGM if configured
   /// 6. Final normalize + fade in/out
+  ///
+  /// Steps 2–6 are CPU-bound and run on tokio's blocking pool.
   #[instrument(skip(self, script), fields(title = %script.title, segments = script.segment_count()))]
   pub async fn generate(&self, script: &PodcastScript) -> Result<AudioBuffer, PodcastError> {
     let config = &script.config;
-    let target_rate = config.output_sample_rate;
-    let target_channels = config.output_channels;
 
     info!("Starting podcast generation");
 
@@ -153,32 +153,8 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
 
     info!(count = segment_buffers.len(), "All segments synthesized");
 
-    // Step 2: Post-process each segment
-    let segment_buffers =
-      self.post_process_segments(segment_buffers, target_rate, target_channels)?;
-
-    // Step 3: Assemble segments with pauses/crossfades
-    let (assembled, _spans) = self.assemble_segments(segment_buffers, config)?;
-
-    // Step 4: Add intro/outro
-    let (mut assembled, _intro_secs) = self
-      .add_intro_outro(assembled, config, target_rate, target_channels)
-      .await?;
-
-    // Step 5: Mix with BGM
-    assembled = self
-      .mix_bgm(assembled, config, target_rate, target_channels)
-      .await?;
-
-    // Step 6: Final normalize + fade
-    phonon_core::normalize(&mut assembled, config.normalize_target);
-
-    if config.fade_in_secs > 0.0 {
-      phonon_core::fade_in(&mut assembled, config.fade_in_secs);
-    }
-    if config.fade_out_secs > 0.0 {
-      phonon_core::fade_out(&mut assembled, config.fade_out_secs);
-    }
+    let assets = self.resolve_assets(config).await?;
+    let (assembled, _spans) = render_off_runtime(segment_buffers, assets, config.clone()).await?;
 
     info!(
       duration = assembled.duration_secs(),
@@ -194,10 +170,6 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
   /// empty `tags`; populate them via [`Episode::with_tags`] before export.
   #[instrument(skip(self, script), fields(title = %script.title))]
   pub async fn generate_episode(&self, script: &PodcastScript) -> Result<Episode, PodcastError> {
-    let config = &script.config;
-    let target_rate = config.output_sample_rate;
-    let target_channels = config.output_channels;
-
     // Synthesize each segment one-by-one. (Concurrent variant is harder
     // to reconcile with per-segment timing in the same pass; for now
     // generate_episode trades concurrency for accurate chapter timing.)
@@ -219,30 +191,8 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
       raw_buffers.push(buf);
     }
 
-    // Resample / channel-convert / per-segment normalize.
-    let processed = self.post_process_segments(raw_buffers, target_rate, target_channels)?;
-
-    // Segment spans are measured during assembly (so pauses and crossfade
-    // overlaps are exact), then shifted by the intro that precedes them.
-    let (assembled, spans) = self.assemble_segments(processed, config)?;
-    let (mut assembled, intro_secs) = self
-      .add_intro_outro(assembled, config, target_rate, target_channels)
-      .await?;
-    let spans: Vec<(f64, f64)> = spans
-      .into_iter()
-      .map(|(start, end)| (start + intro_secs, end + intro_secs))
-      .collect();
-    assembled = self
-      .mix_bgm(assembled, config, target_rate, target_channels)
-      .await?;
-
-    phonon_core::normalize(&mut assembled, config.normalize_target);
-    if config.fade_in_secs > 0.0 {
-      phonon_core::fade_in(&mut assembled, config.fade_in_secs);
-    }
-    if config.fade_out_secs > 0.0 {
-      phonon_core::fade_out(&mut assembled, config.fade_out_secs);
-    }
+    let assets = self.resolve_assets(&script.config).await?;
+    let (assembled, spans) = render_off_runtime(raw_buffers, assets, script.config.clone()).await?;
 
     let (chapters, srt) = build_episode_metadata(script, &spans);
     let episode = Episode::new(assembled)
@@ -261,7 +211,11 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
     output: impl AsRef<Path>,
   ) -> Result<(), PodcastError> {
     let buffer = self.generate(script).await?;
-    phonon_wav::write_wav(output, &buffer).map_err(|e| PodcastError::Io(e.to_string()))?;
+    let output = output.as_ref().to_path_buf();
+    tokio::task::spawn_blocking(move || phonon_wav::write_wav(output, &buffer))
+      .await
+      .map_err(|e| PodcastError::Processing(format!("WAV writer task failed: {e}")))?
+      .map_err(|e| PodcastError::Io(e.to_string()))?;
     Ok(())
   }
 
@@ -294,205 +248,247 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
     Ok(buffer)
   }
 
-  /// Post-process segments: resample and channel-convert to target format.
-  fn post_process_segments(
-    &self,
-    buffers: Vec<AudioBuffer>,
-    target_rate: u32,
-    target_channels: u16,
-  ) -> Result<Vec<AudioBuffer>, PodcastError> {
-    let mut processed = Vec::with_capacity(buffers.len());
-
-    for (i, mut buf) in buffers.into_iter().enumerate() {
-      // Resample if needed
-      if buf.sample_rate != target_rate {
-        buf = phonon_core::resample(&buf, target_rate)
-          .map_err(|e| PodcastError::Processing(format!("Resample segment {}: {}", i, e)))?;
-      }
-
-      // Channel conversion if needed
-      if buf.channels != target_channels {
-        buf = phonon_core::ensure_channels(&buf, target_channels)
-          .map_err(|e| PodcastError::Processing(format!("Channel convert segment {}: {}", i, e)))?;
-      }
-
-      // Per-segment normalize to consistent volume
-      phonon_core::normalize(&mut buf, 0.9);
-
-      processed.push(buf);
+  /// Load or generate the configured intro / outro / BGM, still in their
+  /// source format (conversion happens in [`render`]).
+  async fn resolve_assets(&self, config: &PipelineConfig) -> Result<Assets, PodcastError> {
+    let mut assets = Assets::default();
+    if let Some(source) = config.effective_intro() {
+      assets.intro = Some(self.resolve_asset(&source).await?);
     }
-
-    Ok(processed)
+    if let Some(source) = config.effective_outro() {
+      assets.outro = Some(self.resolve_asset(&source).await?);
+    }
+    if let Some(source) = config.effective_bgm() {
+      assets.bgm = Some(self.resolve_asset(&source).await?);
+    }
+    Ok(assets)
   }
 
-  /// Assemble segments with silence pauses or crossfades between them.
-  ///
-  /// Also returns each segment's `(start, end)` in seconds within the
-  /// assembled track.
-  fn assemble_segments(
-    &self,
-    segments: Vec<AudioBuffer>,
-    config: &PipelineConfig,
-  ) -> Result<(AudioBuffer, Vec<(f64, f64)>), PodcastError> {
-    if segments.is_empty() {
-      return Err(PodcastError::Processing(
-        "No segments to assemble".to_string(),
-      ));
-    }
-
-    let target_rate = config.output_sample_rate;
-    let target_channels = config.output_channels;
-    let pause_secs = config.pause_between_segments_secs;
-    let crossfade_secs = config.crossfade_secs;
-
-    let samples_per_sec = target_rate as f64 * target_channels as f64;
-    let mut spans = Vec::with_capacity(segments.len());
-
-    let mut iter = segments.into_iter();
-    let mut result = iter
-      .next()
-      .ok_or_else(|| PodcastError::Processing("No segments".to_string()))?;
-    spans.push((0.0, result.samples.len() as f64 / samples_per_sec));
-
-    for next_segment in iter {
-      let next_len = next_segment.samples.len();
-
-      // Insert pause between segments (if configured)
-      if pause_secs > 0.0 {
-        let pause = phonon_core::silence(pause_secs, target_rate, target_channels)
-          .map_err(|e| PodcastError::Processing(format!("Generate pause: {}", e)))?;
-        result = phonon_core::merge(&[result, pause])
-          .map_err(|e| PodcastError::Processing(format!("Merge pause: {}", e)))?;
+  async fn resolve_asset(&self, source: &AssetSource) -> Result<AudioBuffer, PodcastError> {
+    match source {
+      AssetSource::File { path } => {
+        let path = path.clone();
+        tokio::task::spawn_blocking(move || {
+          phonon_io::read_audio(&path)
+            .map_err(|e| PodcastError::Io(format!("Failed to load '{}': {}", path, e)))
+        })
+        .await
+        .map_err(|e| PodcastError::Processing(format!("Asset loader task failed: {e}")))?
       }
-
-      // Append the next segment (with optional crossfade)
-      if crossfade_secs > 0.0 {
-        result = phonon_core::crossfade(&result, &next_segment, crossfade_secs)
-          .map_err(|e| PodcastError::Processing(format!("Crossfade: {}", e)))?;
-      } else {
-        result = phonon_core::merge(&[result, next_segment])
-          .map_err(|e| PodcastError::Processing(format!("Merge segment: {}", e)))?;
-      }
-
-      // Both merge and crossfade end with the full next segment, so its
-      // start is wherever its last sample count begins.
-      let end = result.samples.len();
-      spans.push((
-        (end - next_len) as f64 / samples_per_sec,
-        end as f64 / samples_per_sec,
-      ));
-    }
-
-    Ok((result, spans))
-  }
-
-  /// Resample + channel-convert an already-loaded buffer to the target.
-  fn convert_to_target(
-    &self,
-    mut buf: AudioBuffer,
-    target_rate: u32,
-    target_channels: u16,
-  ) -> Result<AudioBuffer, PodcastError> {
-    if buf.sample_rate != target_rate {
-      buf = phonon_core::resample(&buf, target_rate)
-        .map_err(|e| PodcastError::Processing(e.to_string()))?;
-    }
-    if buf.channels != target_channels {
-      buf = phonon_core::ensure_channels(&buf, target_channels)
-        .map_err(|e| PodcastError::Processing(e.to_string()))?;
-    }
-    Ok(buf)
-  }
-
-  /// Resolve an [`AssetSource`] into a buffer in the target format,
-  /// loading from disk or invoking the configured sound generator.
-  async fn resolve_asset(
-    &self,
-    source: &AssetSource,
-    target_rate: u32,
-    target_channels: u16,
-  ) -> Result<AudioBuffer, PodcastError> {
-    let raw = match source {
-      AssetSource::File { path } => phonon_io::read_audio(path)
-        .map_err(|e| PodcastError::Io(format!("Failed to load '{}': {}", path, e)))?,
       AssetSource::Generated { prompt } => self
         .sound_gen
         .generate(prompt)
         .await
-        .map_err(|e| PodcastError::Processing(format!("Sound generation failed: {}", e)))?,
-    };
-    self.convert_to_target(raw, target_rate, target_channels)
+        .map_err(|e| PodcastError::Processing(format!("Sound generation failed: {}", e))),
+    }
+  }
+}
+
+/// Intro / outro / BGM buffers resolved before rendering.
+#[derive(Default)]
+struct Assets {
+  intro: Option<AudioBuffer>,
+  outro: Option<AudioBuffer>,
+  bgm: Option<AudioBuffer>,
+}
+
+/// Run [`render`] on tokio's blocking pool so resampling, assembly and
+/// mixing don't stall the async worker that awaits the pipeline.
+async fn render_off_runtime(
+  segments: Vec<AudioBuffer>,
+  assets: Assets,
+  config: PipelineConfig,
+) -> Result<(AudioBuffer, Vec<(f64, f64)>), PodcastError> {
+  tokio::task::spawn_blocking(move || render(segments, assets, &config))
+    .await
+    .map_err(|e| PodcastError::Processing(format!("Render task failed: {e}")))?
+}
+
+/// Everything after TTS: convert, assemble, add intro/outro, mix BGM,
+/// normalize and fade. Returns the finished track and each segment's
+/// `(start, end)` in seconds within it.
+fn render(
+  segments: Vec<AudioBuffer>,
+  assets: Assets,
+  config: &PipelineConfig,
+) -> Result<(AudioBuffer, Vec<(f64, f64)>), PodcastError> {
+  let target_rate = config.output_sample_rate;
+  let target_channels = config.output_channels;
+
+  let segments = post_process_segments(segments, target_rate, target_channels)?;
+
+  // Segment spans are measured during assembly (so pauses and crossfade
+  // overlaps are exact), then shifted by the intro that precedes them.
+  let (mut assembled, spans) = assemble_segments(segments, config)?;
+
+  let mut intro_secs = 0.0;
+  if let Some(intro) = assets.intro {
+    let intro = convert_to_target(intro, target_rate, target_channels)?;
+    intro_secs = intro.duration_secs();
+    assembled = phonon_core::merge(&[intro, assembled])
+      .map_err(|e| PodcastError::Processing(format!("Merge intro: {}", e)))?;
+  }
+  if let Some(outro) = assets.outro {
+    let outro = convert_to_target(outro, target_rate, target_channels)?;
+    assembled = phonon_core::merge(&[assembled, outro])
+      .map_err(|e| PodcastError::Processing(format!("Merge outro: {}", e)))?;
+  }
+  let spans = spans
+    .into_iter()
+    .map(|(start, end)| (start + intro_secs, end + intro_secs))
+    .collect();
+
+  if let Some(bgm) = assets.bgm {
+    let bgm = convert_to_target(bgm, target_rate, target_channels)?;
+    assembled = mix_bgm(assembled, bgm, config.bgm_volume)?;
   }
 
-  /// Add intro/outro audio to the assembled track. Also returns the
-  /// intro duration in seconds (0 without an intro).
-  async fn add_intro_outro(
-    &self,
-    mut main: AudioBuffer,
-    config: &PipelineConfig,
-    target_rate: u32,
-    target_channels: u16,
-  ) -> Result<(AudioBuffer, f64), PodcastError> {
-    let mut intro_secs = 0.0;
-    if let Some(intro_source) = config.effective_intro() {
-      let intro = self
-        .resolve_asset(&intro_source, target_rate, target_channels)
-        .await?;
-      intro_secs = intro.duration_secs();
-      main = phonon_core::merge(&[intro, main])
-        .map_err(|e| PodcastError::Processing(format!("Merge intro: {}", e)))?;
-    }
-
-    if let Some(outro_source) = config.effective_outro() {
-      let outro = self
-        .resolve_asset(&outro_source, target_rate, target_channels)
-        .await?;
-      main = phonon_core::merge(&[main, outro])
-        .map_err(|e| PodcastError::Processing(format!("Merge outro: {}", e)))?;
-    }
-
-    Ok((main, intro_secs))
+  phonon_core::normalize(&mut assembled, config.normalize_target);
+  if config.fade_in_secs > 0.0 {
+    phonon_core::fade_in(&mut assembled, config.fade_in_secs);
+  }
+  if config.fade_out_secs > 0.0 {
+    phonon_core::fade_out(&mut assembled, config.fade_out_secs);
   }
 
-  /// Mix background music with the main track. Loops or trims to length.
-  async fn mix_bgm(
-    &self,
-    main: AudioBuffer,
-    config: &PipelineConfig,
-    target_rate: u32,
-    target_channels: u16,
-  ) -> Result<AudioBuffer, PodcastError> {
-    let Some(bgm_source) = config.effective_bgm() else {
-      return Ok(main);
-    };
+  Ok((assembled, spans))
+}
 
-    let mut bgm = self
-      .resolve_asset(&bgm_source, target_rate, target_channels)
-      .await?;
-    if bgm.samples.is_empty() {
-      return Err(PodcastError::Processing(
-        "BGM asset is empty — nothing to loop under the main track".to_string(),
-      ));
+/// Post-process segments: resample and channel-convert to target format.
+fn post_process_segments(
+  buffers: Vec<AudioBuffer>,
+  target_rate: u32,
+  target_channels: u16,
+) -> Result<Vec<AudioBuffer>, PodcastError> {
+  let mut processed = Vec::with_capacity(buffers.len());
+
+  for (i, mut buf) in buffers.into_iter().enumerate() {
+    // Resample if needed
+    if buf.sample_rate != target_rate {
+      buf = phonon_core::resample(&buf, target_rate)
+        .map_err(|e| PodcastError::Processing(format!("Resample segment {}: {}", i, e)))?;
     }
 
-    // Lower BGM volume
-    phonon_core::adjust_volume(&mut bgm, config.bgm_volume);
+    // Channel conversion if needed
+    if buf.channels != target_channels {
+      buf = phonon_core::ensure_channels(&buf, target_channels)
+        .map_err(|e| PodcastError::Processing(format!("Channel convert segment {}: {}", i, e)))?;
+    }
 
-    // Loop BGM to match main track length if needed
-    if bgm.samples.len() < main.samples.len() {
-      let mut looped = Vec::with_capacity(main.samples.len());
-      while looped.len() < main.samples.len() {
-        let remaining = main.samples.len() - looped.len();
-        let take = remaining.min(bgm.samples.len());
-        looped.extend_from_slice(&bgm.samples[..take]);
-      }
-      bgm.samples = looped;
+    // Per-segment normalize to consistent volume
+    phonon_core::normalize(&mut buf, 0.9);
+
+    processed.push(buf);
+  }
+
+  Ok(processed)
+}
+
+/// Assemble segments with silence pauses or crossfades between them.
+///
+/// Also returns each segment's `(start, end)` in seconds within the
+/// assembled track.
+fn assemble_segments(
+  segments: Vec<AudioBuffer>,
+  config: &PipelineConfig,
+) -> Result<(AudioBuffer, Vec<(f64, f64)>), PodcastError> {
+  if segments.is_empty() {
+    return Err(PodcastError::Processing(
+      "No segments to assemble".to_string(),
+    ));
+  }
+
+  let target_rate = config.output_sample_rate;
+  let target_channels = config.output_channels;
+  let pause_secs = config.pause_between_segments_secs;
+  let crossfade_secs = config.crossfade_secs;
+
+  let samples_per_sec = target_rate as f64 * target_channels as f64;
+  let mut spans = Vec::with_capacity(segments.len());
+
+  let mut iter = segments.into_iter();
+  let mut result = iter
+    .next()
+    .ok_or_else(|| PodcastError::Processing("No segments".to_string()))?;
+  spans.push((0.0, result.samples.len() as f64 / samples_per_sec));
+
+  for next_segment in iter {
+    let next_len = next_segment.samples.len();
+
+    // Insert pause between segments (if configured)
+    if pause_secs > 0.0 {
+      let pause = phonon_core::silence(pause_secs, target_rate, target_channels)
+        .map_err(|e| PodcastError::Processing(format!("Generate pause: {}", e)))?;
+      result = phonon_core::merge(&[result, pause])
+        .map_err(|e| PodcastError::Processing(format!("Merge pause: {}", e)))?;
+    }
+
+    // Append the next segment (with optional crossfade)
+    if crossfade_secs > 0.0 {
+      result = phonon_core::crossfade(&result, &next_segment, crossfade_secs)
+        .map_err(|e| PodcastError::Processing(format!("Crossfade: {}", e)))?;
     } else {
-      bgm.samples.truncate(main.samples.len());
+      result = phonon_core::merge(&[result, next_segment])
+        .map_err(|e| PodcastError::Processing(format!("Merge segment: {}", e)))?;
     }
 
-    phonon_core::mix(&main, &bgm).map_err(|e| PodcastError::Processing(format!("Mix BGM: {}", e)))
+    // Both merge and crossfade end with the full next segment, so its
+    // start is wherever its last sample count begins.
+    let end = result.samples.len();
+    spans.push((
+      (end - next_len) as f64 / samples_per_sec,
+      end as f64 / samples_per_sec,
+    ));
   }
+
+  Ok((result, spans))
+}
+
+/// Resample + channel-convert an already-loaded buffer to the target.
+fn convert_to_target(
+  mut buf: AudioBuffer,
+  target_rate: u32,
+  target_channels: u16,
+) -> Result<AudioBuffer, PodcastError> {
+  if buf.sample_rate != target_rate {
+    buf = phonon_core::resample(&buf, target_rate)
+      .map_err(|e| PodcastError::Processing(e.to_string()))?;
+  }
+  if buf.channels != target_channels {
+    buf = phonon_core::ensure_channels(&buf, target_channels)
+      .map_err(|e| PodcastError::Processing(e.to_string()))?;
+  }
+  Ok(buf)
+}
+
+/// Mix background music under the main track, looping or trimming it to
+/// the main track's length.
+fn mix_bgm(
+  main: AudioBuffer,
+  mut bgm: AudioBuffer,
+  volume: f32,
+) -> Result<AudioBuffer, PodcastError> {
+  if bgm.samples.is_empty() {
+    return Err(PodcastError::Processing(
+      "BGM asset is empty — nothing to loop under the main track".to_string(),
+    ));
+  }
+
+  phonon_core::adjust_volume(&mut bgm, volume);
+
+  if bgm.samples.len() < main.samples.len() {
+    let mut looped = Vec::with_capacity(main.samples.len());
+    while looped.len() < main.samples.len() {
+      let remaining = main.samples.len() - looped.len();
+      let take = remaining.min(bgm.samples.len());
+      looped.extend_from_slice(&bgm.samples[..take]);
+    }
+    bgm.samples = looped;
+  } else {
+    bgm.samples.truncate(main.samples.len());
+  }
+
+  phonon_core::mix(&main, &bgm).map_err(|e| PodcastError::Processing(format!("Mix BGM: {}", e)))
 }
 
 #[cfg(test)]

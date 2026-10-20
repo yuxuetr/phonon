@@ -21,6 +21,7 @@ use axum::{
 };
 use base64::Engine as _;
 use phonon_ai::{EdgeTts, TtsProvider, VoiceConfig};
+use phonon_core::AudioBuffer;
 use phonon_io::{Mp3Config, PodcastTags};
 use phonon_podcast::{AssetSource, PodcastPipeline, PodcastScript};
 use serde::{Deserialize, Serialize};
@@ -140,6 +141,43 @@ fn check_untrusted_script(script: &PodcastScript) -> Result<(), String> {
 // Handlers
 // ---------------------------------------------------------------------------
 
+fn internal_error(msg: impl std::fmt::Display) -> Response {
+  (
+    StatusCode::INTERNAL_SERVER_ERROR,
+    Json(serde_json::json!({"error": msg.to_string()})),
+  )
+    .into_response()
+}
+
+/// Run decoding / encoding / DSP on tokio's blocking pool so a long request
+/// doesn't stall the worker thread serving everyone else.
+async fn blocking<T, F>(f: F) -> Result<T, String>
+where
+  T: Send + 'static,
+  F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+  tokio::task::spawn_blocking(f)
+    .await
+    .map_err(|e| format!("worker task failed: {e}"))?
+}
+
+/// Encode `buffer` as a WAV response body.
+async fn wav_response(buffer: AudioBuffer) -> Response {
+  let encoded = blocking(move || {
+    let tmp = tempfile::Builder::new()
+      .suffix(".wav")
+      .tempfile()
+      .map_err(|e| e.to_string())?;
+    phonon_wav::write_wav(tmp.path(), &buffer).map_err(|e| e.to_string())?;
+    std::fs::read(tmp.path()).map_err(|e| e.to_string())
+  })
+  .await;
+  match encoded {
+    Ok(bytes) => (StatusCode::OK, [("content-type", "audio/wav")], bytes).into_response(),
+    Err(e) => internal_error(e),
+  }
+}
+
 async fn health() -> Json<HealthResponse> {
   Json(HealthResponse {
     status: "ok".to_string(),
@@ -157,41 +195,8 @@ async fn tts_handler(Json(req): Json<TtsRequest>) -> impl IntoResponse {
   let voice = VoiceConfig::new(&req.voice);
 
   match tts.synthesize(&req.text, &voice).await {
-    Ok(buffer) => {
-      // Encode as WAV bytes
-      let tmp = match tempfile::Builder::new().suffix(".wav").tempfile() {
-        Ok(t) => t,
-        Err(e) => {
-          return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-          )
-            .into_response();
-        }
-      };
-
-      if let Err(e) = phonon_wav::write_wav(tmp.path(), &buffer) {
-        return (
-          StatusCode::INTERNAL_SERVER_ERROR,
-          Json(serde_json::json!({"error": e.to_string()})),
-        )
-          .into_response();
-      }
-
-      match std::fs::read(tmp.path()) {
-        Ok(bytes) => (StatusCode::OK, [("content-type", "audio/wav")], bytes).into_response(),
-        Err(e) => (
-          StatusCode::INTERNAL_SERVER_ERROR,
-          Json(serde_json::json!({"error": e.to_string()})),
-        )
-          .into_response(),
-      }
-    }
-    Err(e) => (
-      StatusCode::INTERNAL_SERVER_ERROR,
-      Json(serde_json::json!({"error": e.to_string()})),
-    )
-      .into_response(),
+    Ok(buffer) => wav_response(buffer).await,
+    Err(e) => internal_error(e),
   }
 }
 
@@ -206,70 +211,25 @@ async fn podcast_generate_handler(Json(script): Json<PodcastScript>) -> impl Int
 
   match pipeline.generate(&script).await {
     Ok(buffer) => {
-      let tmp = match tempfile::Builder::new().suffix(".wav").tempfile() {
-        Ok(t) => t,
-        Err(e) => {
-          return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-          )
-            .into_response();
-        }
-      };
-
-      if let Err(e) = phonon_wav::write_wav(tmp.path(), &buffer) {
-        return (
-          StatusCode::INTERNAL_SERVER_ERROR,
-          Json(serde_json::json!({"error": e.to_string()})),
-        )
-          .into_response();
-      }
-
-      match std::fs::read(tmp.path()) {
-        Ok(bytes) => {
-          info!(
-            duration = buffer.duration_secs(),
-            size = bytes.len(),
-            "Podcast generated successfully"
-          );
-          (StatusCode::OK, [("content-type", "audio/wav")], bytes).into_response()
-        }
-        Err(e) => (
-          StatusCode::INTERNAL_SERVER_ERROR,
-          Json(serde_json::json!({"error": e.to_string()})),
-        )
-          .into_response(),
-      }
+      info!(
+        duration = buffer.duration_secs(),
+        "Podcast generated successfully"
+      );
+      wav_response(buffer).await
     }
-    Err(e) => (
-      StatusCode::INTERNAL_SERVER_ERROR,
-      Json(serde_json::json!({"error": e.to_string()})),
-    )
-      .into_response(),
+    Err(e) => internal_error(e),
   }
 }
 
 async fn podcast_preview_handler(Json(req): Json<serde_json::Value>) -> impl IntoResponse {
   let script_value = match req.get("script") {
     Some(v) => v.clone(),
-    None => {
-      return (
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({"error": "Missing 'script' field"})),
-      )
-        .into_response();
-    }
+    None => return bad_request("Missing 'script' field"),
   };
 
   let script: PodcastScript = match serde_json::from_value(script_value) {
     Ok(s) => s,
-    Err(e) => {
-      return (
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({"error": format!("Invalid script: {e}")})),
-      )
-        .into_response();
-    }
+    Err(e) => return bad_request(format!("Invalid script: {e}")),
   };
 
   if let Err(e) = check_untrusted_script(&script) {
@@ -291,40 +251,8 @@ async fn podcast_preview_handler(Json(req): Json<serde_json::Value>) -> impl Int
   let pipeline = PodcastPipeline::new(tts);
 
   match pipeline.preview_segment(&script, segment_index).await {
-    Ok(buffer) => {
-      let tmp = match tempfile::Builder::new().suffix(".wav").tempfile() {
-        Ok(t) => t,
-        Err(e) => {
-          return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-          )
-            .into_response();
-        }
-      };
-
-      if let Err(e) = phonon_wav::write_wav(tmp.path(), &buffer) {
-        return (
-          StatusCode::INTERNAL_SERVER_ERROR,
-          Json(serde_json::json!({"error": e.to_string()})),
-        )
-          .into_response();
-      }
-
-      match std::fs::read(tmp.path()) {
-        Ok(bytes) => (StatusCode::OK, [("content-type", "audio/wav")], bytes).into_response(),
-        Err(e) => (
-          StatusCode::INTERNAL_SERVER_ERROR,
-          Json(serde_json::json!({"error": e.to_string()})),
-        )
-          .into_response(),
-      }
-    }
-    Err(e) => (
-      StatusCode::BAD_REQUEST,
-      Json(serde_json::json!({"error": e.to_string()})),
-    )
-      .into_response(),
+    Ok(buffer) => wav_response(buffer).await,
+    Err(e) => bad_request(e),
   }
 }
 
@@ -380,10 +308,7 @@ fn finite(v: f32) -> Option<f32> {
 
 /// Write `bytes` to a temp file with the given extension and decode via
 /// `phonon_io::read_audio`. Returns the decoded buffer.
-fn decode_audio_bytes(
-  bytes: &[u8],
-  ext: &str,
-) -> std::result::Result<phonon_core::AudioBuffer, String> {
+fn decode_audio_bytes(bytes: &[u8], ext: &str) -> std::result::Result<AudioBuffer, String> {
   let tmp = tempfile::Builder::new()
     .suffix(&format!(".{}", ext))
     .tempfile()
@@ -402,65 +327,57 @@ async fn lufs_handler(headers: HeaderMap, body: Bytes) -> impl IntoResponse {
   let parsed_json = ct
     .map(|s| s.starts_with("application/json"))
     .unwrap_or(false);
-  let buf_result = if parsed_json {
+  let (audio, ext) = if parsed_json {
     match serde_json::from_slice::<LufsJsonRequest>(&body) {
       Ok(req) => {
         let audio = match base64::engine::general_purpose::STANDARD.decode(req.audio_base64) {
-          Ok(b) => b,
-          Err(e) => {
-            return (
-              StatusCode::BAD_REQUEST,
-              Json(serde_json::json!({"error": format!("base64 decode failed: {e}")})),
-            )
-              .into_response();
-          }
+          Ok(b) => Bytes::from(b),
+          Err(e) => return bad_request(format!("base64 decode failed: {e}")),
         };
-        let ext = req.format.as_deref().unwrap_or("wav");
-        decode_audio_bytes(&audio, ext)
+        let ext = req.format.unwrap_or_else(|| "wav".to_string());
+        (audio, ext)
       }
-      Err(e) => {
-        return (
-          StatusCode::BAD_REQUEST,
-          Json(serde_json::json!({"error": format!("invalid JSON body: {e}")})),
-        )
-          .into_response();
-      }
+      Err(e) => return bad_request(format!("invalid JSON body: {e}")),
     }
   } else {
     if body.is_empty() {
-      return (
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({"error": "empty body — POST raw audio bytes or a JSON envelope"})),
-      )
-        .into_response();
+      return bad_request("empty body — POST raw audio bytes or a JSON envelope");
     }
-    decode_audio_bytes(&body, content_type_to_ext(ct))
+    let ext = content_type_to_ext(ct).to_string();
+    (body, ext)
   };
 
-  let buf = match buf_result {
-    Ok(b) => b,
-    Err(e) => {
+  // The outer error is a failed worker task, the inner one a decode error.
+  let measured = blocking(move || {
+    Ok(decode_audio_bytes(&audio, &ext).map(|buf| {
+      let report = phonon_core::measure_loudness(&buf);
+      LufsResponse {
+        duration_secs: buf.duration_secs(),
+        sample_rate: buf.sample_rate,
+        channels: buf.channels,
+        integrated_lufs: finite(report.integrated_lufs),
+        short_term_max_lufs: finite(report.short_term_max_lufs),
+        momentary_max_lufs: finite(report.momentary_max_lufs),
+        range_lu: report.range_lu,
+        true_peak_dbtp: finite(report.true_peak_dbtp),
+        peak: phonon_core::peak(&buf),
+        rms: phonon_core::rms(&buf),
+        dbfs: finite(phonon_core::dbfs(&buf)),
+      }
+    }))
+  })
+  .await;
+
+  let resp = match measured {
+    Ok(Ok(resp)) => resp,
+    Ok(Err(e)) => {
       return (
         StatusCode::UNPROCESSABLE_ENTITY,
         Json(serde_json::json!({"error": format!("decode failed: {e}")})),
       )
         .into_response();
     }
-  };
-
-  let report = phonon_core::measure_loudness(&buf);
-  let resp = LufsResponse {
-    duration_secs: buf.duration_secs(),
-    sample_rate: buf.sample_rate,
-    channels: buf.channels,
-    integrated_lufs: finite(report.integrated_lufs),
-    short_term_max_lufs: finite(report.short_term_max_lufs),
-    momentary_max_lufs: finite(report.momentary_max_lufs),
-    range_lu: report.range_lu,
-    true_peak_dbtp: finite(report.true_peak_dbtp),
-    peak: phonon_core::peak(&buf),
-    rms: phonon_core::rms(&buf),
-    dbfs: finite(phonon_core::dbfs(&buf)),
+    Err(e) => return internal_error(e),
   };
   (StatusCode::OK, Json(resp)).into_response()
 }
@@ -535,24 +452,9 @@ async fn podcast_episode_handler(Json(req): Json<EpisodeRequest>) -> impl IntoRe
   }
 
   let pipeline = PodcastPipeline::new(EdgeTts::new());
-  let mut episode = match pipeline.generate_episode(&req.script).await {
+  let episode = match pipeline.generate_episode(&req.script).await {
     Ok(e) => e,
-    Err(e) => {
-      return (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({"error": e.to_string()})),
-      )
-        .into_response();
-    }
-  };
-
-  let lufs_after = match req.lufs {
-    Some(target) => {
-      let tp = req.true_peak.unwrap_or(-1.0);
-      phonon_core::normalize_lufs(&mut episode.audio, target, tp);
-      finite(phonon_core::loudness_integrated(&episode.audio))
-    }
-    None => None,
+    Err(e) => return internal_error(e),
   };
 
   // Tags fall back to the script title.
@@ -568,39 +470,36 @@ async fn podcast_episode_handler(Json(req): Json<EpisodeRequest>) -> impl IntoRe
     track: tags_body.track,
     cover: None,
   };
-  episode = episode.with_tags(tags);
+  let mut episode = episode.with_tags(tags);
+  let (lufs, true_peak) = (req.lufs, req.true_peak);
 
-  let mp3_cfg = Mp3Config {
-    bitrate_kbps: bitrate,
-  };
-
-  // Export to a temp MP3 and slurp it back so we can base64 it.
-  let tmp = match tempfile::Builder::new().suffix(".mp3").tempfile() {
-    Ok(t) => t,
-    Err(e) => {
-      return (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({"error": e.to_string()})),
-      )
-        .into_response();
-    }
-  };
-  if let Err(e) = episode.export_mp3(tmp.path(), &mp3_cfg) {
-    return (
-      StatusCode::INTERNAL_SERVER_ERROR,
-      Json(serde_json::json!({"error": e.to_string()})),
-    )
-      .into_response();
-  }
-  let mp3_bytes = match std::fs::read(tmp.path()) {
-    Ok(b) => b,
-    Err(e) => {
-      return (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({"error": e.to_string()})),
-      )
-        .into_response();
-    }
+  // Loudness normalization and MP3 encoding are the expensive part of this
+  // request; export to a temp file and slurp it back so we can base64 it.
+  let rendered = blocking(move || {
+    let lufs_after = match lufs {
+      Some(target) => {
+        phonon_core::normalize_lufs(&mut episode.audio, target, true_peak.unwrap_or(-1.0));
+        finite(phonon_core::loudness_integrated(&episode.audio))
+      }
+      None => None,
+    };
+    let tmp = tempfile::Builder::new()
+      .suffix(".mp3")
+      .tempfile()
+      .map_err(|e| e.to_string())?;
+    let mp3_cfg = Mp3Config {
+      bitrate_kbps: bitrate,
+    };
+    episode
+      .export_mp3(tmp.path(), &mp3_cfg)
+      .map_err(|e| e.to_string())?;
+    let mp3_bytes = std::fs::read(tmp.path()).map_err(|e| e.to_string())?;
+    Ok((episode, lufs_after, mp3_bytes))
+  })
+  .await;
+  let (episode, lufs_after, mp3_bytes) = match rendered {
+    Ok(r) => r,
+    Err(e) => return internal_error(e),
   };
 
   let total = episode.audio.duration_secs();
