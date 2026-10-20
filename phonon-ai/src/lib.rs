@@ -28,6 +28,7 @@ pub mod client;
 pub mod edge_tts;
 pub mod elevenlabs;
 pub mod minimax;
+pub mod qwen;
 pub mod sound_gen;
 pub mod stt;
 pub mod tts;
@@ -38,6 +39,7 @@ pub use client::{HttpClient, retry_transient};
 pub use edge_tts::EdgeTts;
 pub use elevenlabs::ElevenLabsTts;
 pub use minimax::MiniMaxTts;
+pub use qwen::QwenTts;
 pub use sound_gen::{HttpSoundGen, ReplicateSoundGen, SoundGenProvider, SoundPreset, SoundPrompt};
 pub use stt::{
   SegmentMode, SttProvider, TranscribeOptions, TranscriptResult, TranscriptSegment, WhisperStt,

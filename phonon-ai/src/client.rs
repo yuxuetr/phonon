@@ -49,6 +49,22 @@ where
   }
 }
 
+/// Turn a non-2xx response into `AiError::Api` carrying its status and body.
+pub(crate) async fn ensure_success(resp: reqwest::Response) -> Result<reqwest::Response, AiError> {
+  let status = resp.status();
+  if status.is_success() {
+    return Ok(resp);
+  }
+  let message = resp
+    .text()
+    .await
+    .unwrap_or_else(|_| "Failed to read error body".to_string());
+  Err(AiError::Api {
+    status: status.as_u16(),
+    message,
+  })
+}
+
 /// A credential whose `Debug` output is redacted, so providers can keep
 /// deriving `Debug` without leaking keys into logs.
 #[derive(Clone)]

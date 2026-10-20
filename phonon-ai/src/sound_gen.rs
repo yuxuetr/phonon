@@ -26,7 +26,7 @@
 //! ```
 
 use crate::AiError;
-use crate::client::{ApiKey, CONNECT_TIMEOUT, env_key, retry_transient};
+use crate::client::{ApiKey, CONNECT_TIMEOUT, ensure_success, env_key, retry_transient};
 use phonon_core::AudioBuffer;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -429,22 +429,6 @@ impl ReplicateSoundGen {
       }
     }
   }
-}
-
-/// Turn a non-2xx response into `AiError::Api` carrying its status and body.
-async fn ensure_success(resp: reqwest::Response) -> Result<reqwest::Response, AiError> {
-  let status = resp.status();
-  if status.is_success() {
-    return Ok(resp);
-  }
-  let message = resp
-    .text()
-    .await
-    .unwrap_or_else(|_| "Failed to read error body".to_string());
-  Err(AiError::Api {
-    status: status.as_u16(),
-    message,
-  })
 }
 
 impl SoundGenProvider for ReplicateSoundGen {
