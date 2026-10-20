@@ -26,6 +26,7 @@
 //! ```
 
 use crate::AiError;
+use crate::client::ApiKey;
 use phonon_core::AudioBuffer;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -146,7 +147,7 @@ pub trait SoundGenProvider: Send + Sync {
 pub struct HttpSoundGen {
   client: reqwest::Client,
   endpoint: String,
-  api_key: String,
+  api_key: ApiKey,
   response_format: String,
 }
 
@@ -166,7 +167,7 @@ impl HttpSoundGen {
     Ok(Self {
       client,
       endpoint: endpoint.into(),
-      api_key: api_key.into(),
+      api_key: ApiKey::new(api_key),
       response_format: "wav".to_string(),
     })
   }
@@ -203,7 +204,7 @@ impl SoundGenProvider for HttpSoundGen {
     let response = self
       .client
       .post(&self.endpoint)
-      .header("Authorization", format!("Bearer {}", self.api_key))
+      .header("Authorization", format!("Bearer {}", self.api_key.expose()))
       .header("Content-Type", "application/json")
       .json(prompt)
       .send()
@@ -259,7 +260,7 @@ const DEFAULT_MUSICGEN_VERSION: &str =
 #[derive(Debug, Clone)]
 pub struct ReplicateSoundGen {
   client: reqwest::Client,
-  api_token: String,
+  api_token: ApiKey,
   /// Replicate model version hash.
   pub model_version: String,
   /// How often to poll for completion.
@@ -318,7 +319,7 @@ impl ReplicateSoundGen {
 
     Ok(Self {
       client,
-      api_token: api_token.into(),
+      api_token: ApiKey::new(api_token),
       model_version: DEFAULT_MUSICGEN_VERSION.to_string(),
       poll_interval: Duration::from_secs(2),
       max_wait: Duration::from_secs(300),
@@ -356,7 +357,10 @@ impl ReplicateSoundGen {
     let resp = self
       .client
       .post(REPLICATE_API_URL)
-      .header("Authorization", format!("Bearer {}", self.api_token))
+      .header(
+        "Authorization",
+        format!("Bearer {}", self.api_token.expose()),
+      )
       .header("Content-Type", "application/json")
       .json(&body)
       .send()
@@ -393,7 +397,10 @@ impl ReplicateSoundGen {
       let poll_resp = self
         .client
         .get(&poll_url)
-        .header("Authorization", format!("Bearer {}", self.api_token))
+        .header(
+          "Authorization",
+          format!("Bearer {}", self.api_token.expose()),
+        )
         .send()
         .await
         .map_err(|e| AiError::Http(e.to_string()))?;
@@ -491,6 +498,15 @@ impl SoundGenProvider for ReplicateSoundGen {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn test_debug_redacts_tokens() {
+    let http = HttpSoundGen::new("https://example.invalid", "sk-very-secret").unwrap();
+    let replicate = ReplicateSoundGen::with_token("r8-very-secret").unwrap();
+    for debug in [format!("{http:?}"), format!("{replicate:?}")] {
+      assert!(!debug.contains("very-secret"), "{debug}");
+    }
+  }
 
   #[test]
   fn test_sound_prompt_new() {

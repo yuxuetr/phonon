@@ -2,6 +2,28 @@ use crate::AiError;
 use reqwest::Client;
 use std::time::Duration;
 
+/// A credential whose `Debug` output is redacted, so providers can keep
+/// deriving `Debug` without leaking keys into logs.
+#[derive(Clone)]
+pub(crate) struct ApiKey(String);
+
+impl ApiKey {
+  pub(crate) fn new(key: impl Into<String>) -> Self {
+    Self(key.into())
+  }
+
+  /// The raw key, for building request headers only.
+  pub(crate) fn expose(&self) -> &str {
+    &self.0
+  }
+}
+
+impl std::fmt::Debug for ApiKey {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str("ApiKey(<redacted>)")
+  }
+}
+
 /// A thin HTTP client wrapper for TTS API calls.
 ///
 /// Manages the underlying reqwest client, base URL, API key, and timeout settings.
@@ -9,7 +31,7 @@ use std::time::Duration;
 pub struct HttpClient {
   inner: Client,
   base_url: String,
-  api_key: String,
+  api_key: ApiKey,
 }
 
 impl HttpClient {
@@ -34,7 +56,7 @@ impl HttpClient {
     Ok(Self {
       inner,
       base_url: base_url.into(),
-      api_key: api_key.into(),
+      api_key: ApiKey::new(api_key),
     })
   }
 
@@ -68,6 +90,19 @@ impl HttpClient {
 
   /// Returns the API key.
   pub fn api_key(&self) -> &str {
-    &self.api_key
+    self.api_key.expose()
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_debug_redacts_api_key() {
+    let client = HttpClient::new("sk-very-secret", "https://example.invalid", None).unwrap();
+    let debug = format!("{client:?}");
+    assert!(!debug.contains("sk-very-secret"), "{debug}");
+    assert_eq!(client.api_key(), "sk-very-secret");
   }
 }
