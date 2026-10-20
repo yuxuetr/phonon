@@ -199,8 +199,9 @@
 - [x] **J5** 配置模块：预置 + TOML + 按 key 自动选择 + `AnyTts` / `AnyStt` / `ChatEndpoint`
   - 验收：单元测试覆盖查找顺序、自动选择顺序、自定义 provider、缺字段报错
   - DONE: `Config` + 8 个预置 + 自定义 provider;`AnyTts` / `AnyStt` 用 enum 分发(v0.7.3「RPITIT → dyn」不做项的重估条件已触发，但 enum 足够，trait 不改);变异验证：调换优先级、去掉预置遮蔽均使测试变红;联网四家 TTS / STT 经配置通过(2ae1091)
-- [ ] **J6** TTS 超长文本按句切分(Qwen 600 / GLM 1024 / StepFun 1000 字上限)
+- [x] **J6** TTS 超长文本按句切分(Qwen 600 / GLM 1024 / StepFun 1000 字上限)
   - 验收:Qwen 合成 1500 字文本成功
+  - DONE: 按句切分;Qwen 预置 200 字(600 附近时长漂移 1.2–5 倍,实测)
 - [ ] **J7** STT 超长音频按时长切分(GLM 单次 ≤30 s),时间戳按偏移拼接
   - 验收:GLM 识别 36 s 音频成功且时间戳单调
 - [ ] **J8** CLI 接入配置:tts / stt / subtitle / podcast / episode-export;`--config`;`providers` 子命令打印解析结果
