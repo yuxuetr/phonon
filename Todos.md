@@ -89,7 +89,7 @@
 - [x] 发布到 crates.io — workspace version 0.1.0 → 0.7.0,补全各 crate description/keywords/categories/authors,新增 `scripts/publish-crates.sh` (按依赖顺序 dry-run/--execute) 与 `docs/publishing.md`,`cargo publish -p phonon-core --dry-run` 通过 ✅
 - [x] VST3 / CLAP 插件兼容层 — 新增 `phonon-plugin` crate (`publish=false`),`PluginManifest` / `ParamInfo` / `PluginExport` / `ExportedPlugin` 把任何 `DspPlugin` 转成 host-friendly 描述符,`clap`/`vst3` 模块按 feature gate 提供工厂入口骨架,README 记录 SDK 选型与后续接入步骤。10 个测试全过 ✅
 
-## v0.7.1 — 评估修复 (进行中)
+## v0.7.1 — 评估修复 ✅ 已完成
 
 > 来源:[docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md)。每项一个 commit,先写能红的测试再修。
 
@@ -112,4 +112,4 @@
 - [x] **F12** 删除未使用依赖(mcp → ai/podcast/schemars,studio → ai/podcast) ✅
 - [x] **F13** 效果抽象收敛:删 phonon-plugin、deprecated 包装、`EffectAsPlugin` ✅ (同时删 AudioEffect/add_effect,EffectChain 直接持有 DspPlugin)
 - [x] **F14** phonon-io 编码器 feature 开关(aac 默认关)+ docs.rs 元数据 ✅ (只给 aac 加 feature;mp3/flac/ogg 暂无关闭需求,README 注明 LAME LGPL)
-- [ ] **F15** 文档同步(AGENTS / README / RoadMap / CHANGELOG 0.7)
+- [x] **F15** 文档同步(AGENTS / README / RoadMap / CHANGELOG 0.7) ✅ (CHANGELOG 加手写 v0.7.1 段;v0.6/v0.7 tag 未打,需维护者决定发布点)
