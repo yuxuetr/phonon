@@ -202,8 +202,9 @@
 - [x] **J6** TTS 超长文本按句切分(Qwen 600 / GLM 1024 / StepFun 1000 字上限)
   - 验收:Qwen 合成 1500 字文本成功
   - DONE: 按句切分;Qwen 预置 200 字(600 附近时长漂移 1.2–5 倍,实测)
-- [ ] **J7** STT 超长音频按时长切分(GLM 单次 ≤30 s),时间戳按偏移拼接
+- [x] **J7** STT 超长音频按时长切分(GLM 单次 ≤30 s),时间戳按偏移拼接
   - 验收:GLM 识别 36 s 音频成功且时间戳单调
+  - DONE: GLM 36 s / Qwen 433 s 实测分段识别，时间戳单调
 - [ ] **J8** CLI 接入配置:tts / stt / subtitle / podcast / episode-export;`--config`;`providers` 子命令打印解析结果
 - [ ] **J9** server 的 TTS 按配置选择 provider(无 key 时仍为 Edge)
 - [ ] **J10** 播客管线每段按峰值归一化，不同音色响度相差 6 dB(Edge 4 个中文音色实测 -15.5 ~ -21.5 LUFS)
