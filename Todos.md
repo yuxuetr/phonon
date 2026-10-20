@@ -161,7 +161,8 @@
 - [x] **H5** `OpenAiScriptGenerator` 不走 G2 的重试(429 / 5xx 直接失败),且 LLM 错误被归为 `PodcastError::Tts`
   - 做法:公开 `phonon_ai::retry_transient` 并在脚本生成中使用;错误归为 `Script`
   - DONE: `retry_transient` 公开(基础延迟仍为内部常量);本地服务器先 429 后 200 的测试中请求数 1 → 2;新增 `HttpClient::with_client` / `OpenAiScriptGenerator::with_client`
-- [ ] **H6** phonon-cli 声明了未使用的 phonon-wav 依赖
+- [x] **H6** phonon-cli 声明了未使用的 phonon-wav 依赖
+  - DONE: 已删除
 
 不做(当前版本):
 - **lufs.rs 的 biquad**:系数按 BS.1770 规范直接给出(DF-II 转置),与 RBJ cookbook 不同;可共享的只有 3 行差分方程。
