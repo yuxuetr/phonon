@@ -14,13 +14,13 @@
 use axum::{
   Router,
   body::Bytes,
-  extract::{DefaultBodyLimit, Json},
+  extract::{DefaultBodyLimit, Json, State},
   http::{HeaderMap, StatusCode, header},
   response::{IntoResponse, Response},
   routing::{get, post},
 };
 use base64::Engine as _;
-use phonon_ai::{EdgeTts, TtsProvider, VoiceConfig};
+use phonon_ai::{AnyTts, Config, TtsProvider, VoiceConfig};
 use phonon_core::AudioBuffer;
 use phonon_io::{Mp3Config, PodcastTags};
 use phonon_podcast::{AssetSource, PodcastPipeline, PodcastScript};
@@ -37,13 +37,8 @@ use tracing::info;
 struct TtsRequest {
   /// Text to synthesize.
   text: String,
-  /// Voice ID (e.g. "en-US-AriaNeural").
-  #[serde(default = "default_voice")]
-  voice: String,
-}
-
-fn default_voice() -> String {
-  "en-US-AriaNeural".to_string()
+  /// Voice ID of the configured provider; defaults to the provider's.
+  voice: Option<String>,
 }
 
 /// Health check response.
@@ -185,14 +180,16 @@ async fn health() -> Json<HealthResponse> {
   })
 }
 
-async fn tts_handler(Json(req): Json<TtsRequest>) -> impl IntoResponse {
-  info!(text_len = req.text.len(), voice = %req.voice, "TTS request");
+async fn tts_handler(State(tts): State<AnyTts>, Json(req): Json<TtsRequest>) -> impl IntoResponse {
+  let voice = req.voice.as_deref().unwrap_or(tts.default_voice());
+  info!(text_len = req.text.len(), voice, "TTS request");
   if req.text.chars().count() > MAX_TEXT_CHARS {
     return bad_request(format!("text exceeds {MAX_TEXT_CHARS} characters"));
   }
-
-  let tts = EdgeTts::new();
-  let voice = VoiceConfig::new(&req.voice);
+  if voice.is_empty() {
+    return bad_request("'voice' is required: the configured provider has no default");
+  }
+  let voice = VoiceConfig::new(voice);
 
   match tts.synthesize(&req.text, &voice).await {
     Ok(buffer) => wav_response(buffer).await,
@@ -200,13 +197,15 @@ async fn tts_handler(Json(req): Json<TtsRequest>) -> impl IntoResponse {
   }
 }
 
-async fn podcast_generate_handler(Json(script): Json<PodcastScript>) -> impl IntoResponse {
+async fn podcast_generate_handler(
+  State(tts): State<AnyTts>,
+  Json(script): Json<PodcastScript>,
+) -> impl IntoResponse {
   info!(title = %script.title, segments = script.segment_count(), "Podcast generation request");
   if let Err(e) = check_untrusted_script(&script) {
     return bad_request(e);
   }
 
-  let tts = EdgeTts::new();
   let pipeline = PodcastPipeline::new(tts);
 
   match pipeline.generate(&script).await {
@@ -221,7 +220,10 @@ async fn podcast_generate_handler(Json(script): Json<PodcastScript>) -> impl Int
   }
 }
 
-async fn podcast_preview_handler(Json(req): Json<serde_json::Value>) -> impl IntoResponse {
+async fn podcast_preview_handler(
+  State(tts): State<AnyTts>,
+  Json(req): Json<serde_json::Value>,
+) -> impl IntoResponse {
   let script_value = match req.get("script") {
     Some(v) => v.clone(),
     None => return bad_request("Missing 'script' field"),
@@ -247,7 +249,6 @@ async fn podcast_preview_handler(Json(req): Json<serde_json::Value>) -> impl Int
       "Podcast preview request"
   );
 
-  let tts = EdgeTts::new();
   let pipeline = PodcastPipeline::new(tts);
 
   match pipeline.preview_segment(&script, segment_index).await {
@@ -428,7 +429,10 @@ struct EpisodeResponse {
   mp3_base64: String,
 }
 
-async fn podcast_episode_handler(Json(req): Json<EpisodeRequest>) -> impl IntoResponse {
+async fn podcast_episode_handler(
+  State(tts): State<AnyTts>,
+  Json(req): Json<EpisodeRequest>,
+) -> impl IntoResponse {
   info!(title = %req.script.title, segments = req.script.segment_count(), "Episode request");
   if let Err(e) = check_untrusted_script(&req.script) {
     return bad_request(e);
@@ -446,7 +450,7 @@ async fn podcast_episode_handler(Json(req): Json<EpisodeRequest>) -> impl IntoRe
     return bad_request("true_peak must be within -20..=0");
   }
 
-  let pipeline = PodcastPipeline::new(EdgeTts::new());
+  let pipeline = PodcastPipeline::new(tts);
   let episode = match pipeline.generate_episode(&req.script).await {
     Ok(e) => e,
     Err(e) => return internal_error(e),
@@ -521,7 +525,8 @@ async fn podcast_episode_handler(Json(req): Json<EpisodeRequest>) -> impl IntoRe
 // Server setup
 // ---------------------------------------------------------------------------
 
-fn app() -> Router {
+/// Routes, with every TTS request served by `tts`.
+fn app(tts: AnyTts) -> Router {
   Router::new()
     .route("/health", get(health))
     .route("/api/tts", post(tts_handler))
@@ -531,6 +536,7 @@ fn app() -> Router {
     .route("/api/podcast/episode", post(podcast_episode_handler))
     .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
     .layer(TraceLayer::new_for_http())
+    .with_state(tts)
 }
 
 #[tokio::main]
@@ -546,13 +552,18 @@ async fn main() -> std::io::Result<()> {
   // (e.g. 0.0.0.0:3000) explicitly to expose it.
   let bind = std::env::var("PHONON_BIND").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
 
-  info!(bind = %bind, "Starting Phonon server");
+  // Resolved once: a broken config should stop startup, not fail requests.
+  // Without config or keys this is keyless Edge TTS.
+  let tts = Config::load(None)
+    .and_then(|config| config.tts())
+    .map_err(std::io::Error::other)?;
+  info!(bind = %bind, provider = tts.provider(), model = tts.model(), "Starting Phonon server");
 
   let listener = tokio::net::TcpListener::bind(&bind).await?;
 
   info!("Listening on {bind}");
 
-  axum::serve(listener, app()).await
+  axum::serve(listener, app(tts)).await
 }
 
 #[cfg(test)]
@@ -563,9 +574,17 @@ mod tests {
   use http_body_util::BodyExt;
   use tower::ServiceExt;
 
+  /// Keyless Edge TTS, whatever keys the environment has.
+  fn test_app() -> Router {
+    let tts = Config::from_toml("[tts]\nprovider = \"edge\"")
+      .and_then(|c| c.tts())
+      .expect("edge tts");
+    app(tts)
+  }
+
   #[tokio::test]
   async fn test_health_endpoint() {
-    let app = app();
+    let app = test_app();
     let req = Request::builder()
       .uri("/health")
       .body(Body::empty())
@@ -577,7 +596,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_tts_missing_body() {
-    let app = app();
+    let app = test_app();
     let req = Request::builder()
       .method("POST")
       .uri("/api/tts")
@@ -614,7 +633,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_lufs_empty_body() {
-    let response = app()
+    let response = test_app()
       .oneshot(
         Request::builder()
           .method("POST")
@@ -630,7 +649,7 @@ mod tests {
   #[tokio::test]
   async fn test_lufs_raw_wav() {
     let wav = sine_wav_bytes(2.0, 48_000, 0.5);
-    let response = app()
+    let response = test_app()
       .oneshot(
         Request::builder()
           .method("POST")
@@ -657,7 +676,7 @@ mod tests {
     let wav = sine_wav_bytes(1.0, 44_100, 0.25);
     let b64 = base64::engine::general_purpose::STANDARD.encode(&wav);
     let envelope = serde_json::json!({"audio_base64": b64, "format": "wav"});
-    let response = app()
+    let response = test_app()
       .oneshot(
         Request::builder()
           .method("POST")
@@ -678,7 +697,7 @@ mod tests {
   #[tokio::test]
   async fn test_lufs_json_bad_base64() {
     let envelope = serde_json::json!({"audio_base64": "%%not-base64%%"});
-    let response = app()
+    let response = test_app()
       .oneshot(
         Request::builder()
           .method("POST")
@@ -702,7 +721,7 @@ mod tests {
   }
 
   async fn post_json(uri: &str, body: serde_json::Value) -> StatusCode {
-    app()
+    test_app()
       .oneshot(
         Request::builder()
           .method("POST")
@@ -786,7 +805,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_episode_missing_script() {
-    let response = app()
+    let response = test_app()
       .oneshot(
         Request::builder()
           .method("POST")

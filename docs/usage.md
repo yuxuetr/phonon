@@ -291,7 +291,8 @@ PHONON_BIND=127.0.0.1:8080 cargo run -p phonon-server
 # Health
 curl http://localhost:3000/health
 
-# TTS (defaults to Edge TTS, no API key required)
+# TTS: provider from the config / API keys, else Edge TTS (no key needed);
+# "voice" is optional and must belong to that provider
 curl -X POST http://localhost:3000/api/tts \
   -H 'Content-Type: application/json' \
   -d '{"text":"Hello phonon","voice":"en-US-AriaNeural"}' \
