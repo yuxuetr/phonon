@@ -4077,6 +4077,7 @@ dependencies = [
 name = "phonon-ai"
 version = "0.7.3"
 dependencies = [
+ "base64 0.22.1",
  "blake3",
  "bytes",
  "dirs 5.0.1",

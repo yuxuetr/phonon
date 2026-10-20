@@ -39,7 +39,7 @@ pub use client::{HttpClient, retry_transient};
 pub use edge_tts::EdgeTts;
 pub use elevenlabs::ElevenLabsTts;
 pub use minimax::MiniMaxTts;
-pub use qwen::QwenTts;
+pub use qwen::{QwenStt, QwenTts};
 pub use sound_gen::{HttpSoundGen, ReplicateSoundGen, SoundGenProvider, SoundPreset, SoundPrompt};
 pub use stt::{
   SegmentMode, SttProvider, TranscribeOptions, TranscriptResult, TranscriptSegment, WhisperStt,

@@ -21,6 +21,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true
+base64.workspace = true
 msedge-tts.workspace = true
 futures.workspace = true
 phonon-wav.workspace = true
