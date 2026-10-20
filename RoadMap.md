@@ -88,7 +88,7 @@
 
 已完成:流式 TTS、EffectChain 统一到 `DspPlugin`(v0.7.1 删除了 `AudioEffect`)、wasm-pack demo。
 
-- 发布 crates.io(先补 v0.6 / v0.7 tag)
+- 发布 crates.io(v0.7.0 / v0.7.3 已打 tag;v0.6 未打 tag)
 - VST3 / CLAP 兼容层 —— v0.7.1 删除了无 FFI 的 `phonon-plugin` 骨架;
   **重估条件**:出现需要加载 Phonon 插件的真实宿主
 

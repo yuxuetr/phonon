@@ -3,7 +3,7 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 ---
-## v0.7.3 (unreleased) — architecture re-evaluation
+## v0.7.3 - 2026-10-20 — architecture re-evaluation
 
 Items H1–H6 in [Todos.md](./Todos.md).
 
@@ -27,7 +27,7 @@ Items H1–H6 in [Todos.md](./Todos.md).
 - `filters::filter()` is a one-band `ParametricEq` (bit-identical output).
 - phonon-ai's `tempfile` and phonon-cli's `phonon-wav` dependencies removed.
 
-## v0.7.2 (unreleased) — evaluation backlog
+## v0.7.2 (released as part of v0.7.3) — evaluation backlog
 
 Items G1–G10 in [Todos.md](./Todos.md); see `git log` for individual commits.
 
@@ -61,7 +61,7 @@ Items G1–G10 in [Todos.md](./Todos.md); see `git log` for individual commits.
 - Server: WAV / MP3 encoding and LUFS measurement run on the blocking pool.
 - Studio: EQ, effects, playback resampling and waveform/FFT run off the UI thread.
 
-## v0.7.1 (unreleased) — evaluation fixes
+## v0.7.1 (released as part of v0.7.3) — evaluation fixes
 
 Hand-written summary of the fixes from [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md);
 see `git log` for individual commits.
@@ -99,7 +99,7 @@ see `git log` for individual commits.
 - CI: clippy `-D warnings` passes on stable 1.99; doctests and AAC feature are tested.
 
 ---
-## [unreleased]
+## v0.7.0 (tagged at 70daa58; v0.6 was never tagged)
 
 ### Bug Fixes
 
