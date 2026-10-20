@@ -395,7 +395,7 @@ impl ReplicateSoundGen {
 
       // A dropped poll must not abandon a prediction that is still running.
       let status_pred: ReplicatePrediction = retry_transient(RETRY_BASE_DELAY, || async {
-        self
+        let resp = self
           .client
           .get(&poll_url)
           .header(
@@ -404,10 +404,12 @@ impl ReplicateSoundGen {
           )
           .send()
           .await
-          .map_err(|e| AiError::Http(e.to_string()))?
+          .map_err(|e| AiError::Http(e.to_string()))?;
+        ensure_success(resp)
+          .await?
           .json()
           .await
-          .map_err(|e| AiError::Http(e.to_string()))
+          .map_err(|e| AiError::Decode(format!("Replicate status is not valid JSON: {e}")))
       })
       .await?;
 
@@ -447,6 +449,22 @@ impl ReplicateSoundGen {
   }
 }
 
+/// Turn a non-2xx response into `AiError::Api` carrying its status and body.
+async fn ensure_success(resp: reqwest::Response) -> Result<reqwest::Response, AiError> {
+  let status = resp.status();
+  if status.is_success() {
+    return Ok(resp);
+  }
+  let message = resp
+    .text()
+    .await
+    .unwrap_or_else(|_| "Failed to read error body".to_string());
+  Err(AiError::Api {
+    status: status.as_u16(),
+    message,
+  })
+}
+
 impl SoundGenProvider for ReplicateSoundGen {
   #[instrument(skip(self, prompt), fields(prompt_len = prompt.prompt.len()))]
   async fn generate(&self, prompt: &SoundPrompt) -> Result<AudioBuffer, AiError> {
@@ -455,18 +473,22 @@ impl SoundGenProvider for ReplicateSoundGen {
     let output_url = self.run_prediction(prompt).await?;
     info!(url = %output_url, "Prediction complete, downloading audio");
 
-    // Download the output audio file.
-    let audio_resp = self
-      .client
-      .get(&output_url)
-      .send()
-      .await
-      .map_err(|e| AiError::Http(e.to_string()))?;
-
-    let audio_bytes = audio_resp
-      .bytes()
-      .await
-      .map_err(|e| AiError::Http(e.to_string()))?;
+    // Download the output audio file. A non-2xx body (e.g. an expired
+    // signed URL's error page) must not reach the audio decoder.
+    let audio_bytes = retry_transient(RETRY_BASE_DELAY, || async {
+      let resp = self
+        .client
+        .get(&output_url)
+        .send()
+        .await
+        .map_err(|e| AiError::Http(e.to_string()))?;
+      ensure_success(resp)
+        .await?
+        .bytes()
+        .await
+        .map_err(|e| AiError::Http(e.to_string()))
+    })
+    .await?;
 
     info!(bytes = audio_bytes.len(), "Downloaded audio from Replicate");
 
@@ -499,6 +521,31 @@ impl SoundGenProvider for ReplicateSoundGen {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  fn response(status: u16, body: &str) -> reqwest::Response {
+    reqwest::Response::from(
+      http::Response::builder()
+        .status(status)
+        .body(body.to_string())
+        .unwrap(),
+    )
+  }
+
+  #[tokio::test]
+  async fn test_ensure_success_surfaces_http_errors() {
+    assert!(ensure_success(response(200, "ok")).await.is_ok());
+
+    let err = ensure_success(response(403, "expired signature"))
+      .await
+      .unwrap_err();
+    assert!(
+      matches!(err, AiError::Api { status: 403, ref message } if message == "expired signature")
+    );
+    assert!(!err.is_transient());
+
+    let err = ensure_success(response(503, "busy")).await.unwrap_err();
+    assert!(err.is_transient(), "5xx polls are retried");
+  }
 
   #[test]
   fn test_debug_redacts_tokens() {

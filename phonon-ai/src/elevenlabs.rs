@@ -184,6 +184,26 @@ impl ElevenLabsTts {
   }
 }
 
+impl ElevenLabsTts {
+  /// `{base}/text-to-speech/{voice_id}[/stream]`, with `voice_id`
+  /// percent-encoded as a single path segment so it cannot add path
+  /// segments or a query string to the request.
+  fn tts_url(&self, voice_id: &str, stream: bool) -> Result<reqwest::Url, AiError> {
+    let mut url = reqwest::Url::parse(self.client.base_url())
+      .map_err(|e| AiError::Config(format!("invalid ElevenLabs base URL: {e}")))?;
+    {
+      let mut segments = url
+        .path_segments_mut()
+        .map_err(|_| AiError::Config("ElevenLabs base URL cannot have a path".to_string()))?;
+      segments.pop_if_empty().extend(["text-to-speech", voice_id]);
+      if stream {
+        segments.push("stream");
+      }
+    }
+    Ok(url)
+  }
+}
+
 /// ElevenLabs PCM streaming: 24 kHz, 16-bit LE, mono.
 const ELEVENLABS_PCM_SAMPLE_RATE: u32 = 24000;
 
@@ -192,11 +212,7 @@ impl crate::tts::TtsProvider for ElevenLabsTts {
   async fn synthesize(&self, text: &str, voice: &VoiceConfig) -> Result<AudioBuffer, AiError> {
     info!("Synthesizing text via ElevenLabs TTS");
 
-    let url = format!(
-      "{}/text-to-speech/{}",
-      self.client.base_url(),
-      voice.voice_id
-    );
+    let url = self.tts_url(&voice.voice_id, false)?;
 
     let voice_settings = Self::voice_settings_from_config(voice);
     let request_body = ElevenLabsTtsRequest {
@@ -209,7 +225,7 @@ impl crate::tts::TtsProvider for ElevenLabsTts {
       let response = self
         .client
         .inner()
-        .post(&url)
+        .post(url.clone())
         .header("xi-api-key", self.client.api_key())
         .header("Content-Type", "application/json")
         .header("Accept", "audio/mpeg")
@@ -265,11 +281,7 @@ impl crate::tts::TtsProvider for ElevenLabsTts {
   ) -> Result<(), AiError> {
     info!("Streaming TTS via ElevenLabs");
 
-    let url = format!(
-      "{}/text-to-speech/{}/stream",
-      self.client.base_url(),
-      voice.voice_id
-    );
+    let url = self.tts_url(&voice.voice_id, true)?;
 
     let voice_settings = Self::voice_settings_from_config(voice);
     let request_body = ElevenLabsTtsRequest {
@@ -281,7 +293,7 @@ impl crate::tts::TtsProvider for ElevenLabsTts {
     let response = self
       .client
       .inner()
-      .post(&url)
+      .post(url.clone())
       .query(&[("output_format", "pcm_24000")])
       .header("xi-api-key", self.client.api_key())
       .header("Content-Type", "application/json")
@@ -353,6 +365,23 @@ impl crate::tts::TtsProvider for ElevenLabsTts {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn test_voice_id_is_one_escaped_path_segment() {
+    let tts = ElevenLabsTts::with_config("k", "m").unwrap();
+    let plain = tts.tts_url("21m00Tcm4TlvDq8ikWAM", true).unwrap();
+    assert_eq!(
+      plain.as_str(),
+      "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM/stream"
+    );
+
+    let hostile = tts.tts_url("../../voices/x?y=1#z", false).unwrap();
+    assert_eq!(hostile.query(), None);
+    assert_eq!(hostile.fragment(), None);
+    let segments: Vec<_> = hostile.path_segments().unwrap().collect();
+    assert_eq!(segments.len(), 3, "{hostile}");
+    assert_eq!(&segments[..2], ["v1", "text-to-speech"]);
+  }
 
   #[test]
   fn test_elevenlabs_with_config() {

@@ -28,3 +28,6 @@ phonon-wav.workspace = true
 blake3.workspace = true
 dirs.workspace = true
 hex.workspace = true
+
+[dev-dependencies]
+http = "1"

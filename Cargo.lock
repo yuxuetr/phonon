@@ -4098,6 +4098,7 @@ dependencies = [
  "dirs 5.0.1",
  "futures",
  "hex",
+ "http",
  "msedge-tts",
  "phonon-core",
  "phonon-io",
