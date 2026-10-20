@@ -22,7 +22,7 @@
 //! ```
 
 use crate::AiError;
-use crate::client::{HttpClient, RETRY_BASE_DELAY, env_key, retry_transient};
+use crate::client::{HttpClient, env_key, retry_transient};
 use crate::tts::pcm_i16le_to_f32;
 use crate::voice::VoiceConfig;
 use futures::StreamExt;
@@ -202,7 +202,7 @@ impl crate::tts::TtsProvider for ElevenLabsTts {
       voice_settings,
     };
 
-    let audio_bytes = retry_transient(RETRY_BASE_DELAY, || async {
+    let audio_bytes = retry_transient(|| async {
       let response = self
         .client
         .inner()

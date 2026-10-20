@@ -20,7 +20,7 @@
 
 use crate::PodcastError;
 use crate::script::{PodcastScript, Segment};
-use phonon_ai::VoiceConfig;
+use phonon_ai::{AiError, VoiceConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
@@ -186,7 +186,8 @@ pub struct OpenAiScriptGenerator {
 impl OpenAiScriptGenerator {
   /// Create from `OPENAI_API_KEY` environment variable.
   pub fn from_env() -> Result<Self, PodcastError> {
-    let client = phonon_ai::HttpClient::openai().map_err(|e| PodcastError::Tts(e.to_string()))?;
+    let client =
+      phonon_ai::HttpClient::openai().map_err(|e| PodcastError::Script(e.to_string()))?;
     Ok(Self {
       client,
       model: "gpt-4o-mini".to_string(),
@@ -200,11 +201,19 @@ impl OpenAiScriptGenerator {
     model: impl Into<String>,
   ) -> Result<Self, PodcastError> {
     let client = phonon_ai::HttpClient::new(api_key, base_url, Some(120))
-      .map_err(|e| PodcastError::Tts(e.to_string()))?;
+      .map_err(|e| PodcastError::Script(e.to_string()))?;
     Ok(Self {
       client,
       model: model.into(),
     })
+  }
+
+  /// Use a caller-configured client (proxy, TLS, timeouts).
+  pub fn with_client(client: phonon_ai::HttpClient, model: impl Into<String>) -> Self {
+    Self {
+      client,
+      model: model.into(),
+    }
   }
 
   /// Set the chat model.
@@ -279,33 +288,36 @@ impl ScriptGenerator for OpenAiScriptGenerator {
 
     let url = format!("{}/chat/completions", self.client.base_url());
 
-    let response = self
-      .client
-      .inner()
-      .post(&url)
-      .header("Authorization", format!("Bearer {}", self.client.api_key()))
-      .header("Content-Type", "application/json")
-      .json(&body)
-      .send()
-      .await
-      .map_err(|e| PodcastError::Tts(format!("LLM request failed: {e}")))?;
-
-    if !response.status().is_success() {
-      let status = response.status();
-      let text = response
-        .text()
+    // Same request every attempt, so rate limits and 5xx are safe to retry.
+    let resp_json: serde_json::Value = phonon_ai::retry_transient(|| async {
+      let response = self
+        .client
+        .inner()
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", self.client.api_key()))
+        .json(&body)
+        .send()
         .await
-        .unwrap_or_else(|_| "Failed to read body".to_string());
-      return Err(PodcastError::Tts(format!(
-        "LLM API error ({}): {}",
-        status, text
-      )));
-    }
+        .map_err(|e| AiError::Http(e.to_string()))?;
 
-    let resp_json: serde_json::Value = response
-      .json()
-      .await
-      .map_err(|e| PodcastError::Tts(format!("Failed to parse LLM response: {e}")))?;
+      let status = response.status();
+      if !status.is_success() {
+        let message = response
+          .text()
+          .await
+          .unwrap_or_else(|_| "Failed to read body".to_string());
+        return Err(AiError::Api {
+          status: status.as_u16(),
+          message,
+        });
+      }
+      response
+        .json()
+        .await
+        .map_err(|e| AiError::Decode(format!("Failed to parse LLM response: {e}")))
+    })
+    .await
+    .map_err(|e| PodcastError::Script(format!("LLM request failed: {e}")))?;
 
     // Extract the assistant message content
     let content = resp_json["choices"][0]["message"]["content"]
@@ -367,6 +379,67 @@ impl ScriptGenerator for OpenAiScriptGenerator {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::sync::Arc;
+  use std::sync::atomic::{AtomicUsize, Ordering};
+  use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+  /// Serves `responses` in order, one per connection, on a local port.
+  async fn serve(responses: Vec<(u16, String)>) -> (String, Arc<AtomicUsize>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let hits = Arc::new(AtomicUsize::new(0));
+    let counter = hits.clone();
+    tokio::spawn(async move {
+      for (status, body) in responses {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        // Read the whole request so the client never sees a reset.
+        let mut request = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+          let n = stream.read(&mut chunk).await.unwrap();
+          request.extend_from_slice(&chunk[..n]);
+          let text = String::from_utf8_lossy(&request);
+          if let Some(end) = text.find("\r\n\r\n") {
+            let length = text[..end]
+              .lines()
+              .find_map(|l| {
+                l.to_ascii_lowercase()
+                  .strip_prefix("content-length:")
+                  .map(|v| v.trim().parse::<usize>().unwrap())
+              })
+              .unwrap_or(0);
+            if request.len() >= end + 4 + length {
+              break;
+            }
+          }
+        }
+        counter.fetch_add(1, Ordering::SeqCst);
+        let response = format!(
+          "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+          body.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+      }
+    });
+    (url, hits)
+  }
+
+  #[tokio::test]
+  async fn test_openai_generator_retries_rate_limit() {
+    let script = r#"{"title":"T","segments":[{"speaker":"host","text":"Hi"},{"speaker":"guest","text":"Hello"}]}"#;
+    let ok = serde_json::json!({"choices": [{"message": {"content": script}}]}).to_string();
+    let (url, hits) = serve(vec![(429, "{}".to_string()), (200, ok)]).await;
+
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let generator = OpenAiScriptGenerator::with_client(
+      phonon_ai::HttpClient::with_client(http, "k", url),
+      "test-model",
+    );
+    let result = generator.generate(&ScriptRequest::new("topic")).await;
+
+    assert_eq!(hits.load(Ordering::SeqCst), 2);
+    assert_eq!(result.unwrap().segment_count(), 2);
+  }
 
   #[test]
   fn test_script_request_defaults() {

@@ -18,7 +18,7 @@
 //! ```
 
 use crate::AiError;
-use crate::client::{RETRY_BASE_DELAY, retry_transient};
+use crate::client::retry_transient;
 use crate::voice::VoiceConfig;
 use phonon_core::AudioBuffer;
 use std::time::Duration;
@@ -75,7 +75,7 @@ impl crate::tts::TtsProvider for EdgeTts {
 
     // The async client can be dropped mid-request, so the timeout really
     // cancels a stalled connection instead of leaking a blocking thread.
-    let audio_bytes = retry_transient(RETRY_BASE_DELAY, || async {
+    let audio_bytes = retry_transient(|| async {
       let synthesis = async {
         let mut client = msedge_tts::tts::client::tokio_runtime::connect_async()
           .await

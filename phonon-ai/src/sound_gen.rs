@@ -26,7 +26,7 @@
 //! ```
 
 use crate::AiError;
-use crate::client::{ApiKey, CONNECT_TIMEOUT, RETRY_BASE_DELAY, env_key, retry_transient};
+use crate::client::{ApiKey, CONNECT_TIMEOUT, env_key, retry_transient};
 use phonon_core::AudioBuffer;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -376,7 +376,7 @@ impl ReplicateSoundGen {
       tokio::time::sleep(self.poll_interval).await;
 
       // A dropped poll must not abandon a prediction that is still running.
-      let status_pred: ReplicatePrediction = retry_transient(RETRY_BASE_DELAY, || async {
+      let status_pred: ReplicatePrediction = retry_transient(|| async {
         let resp = self
           .client
           .get(&poll_url)
@@ -457,7 +457,7 @@ impl SoundGenProvider for ReplicateSoundGen {
 
     // Download the output audio file. A non-2xx body (e.g. an expired
     // signed URL's error page) must not reach the audio decoder.
-    let audio_bytes = retry_transient(RETRY_BASE_DELAY, || async {
+    let audio_bytes = retry_transient(|| async {
       let resp = self
         .client
         .get(&output_url)

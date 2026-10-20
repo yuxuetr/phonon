@@ -42,7 +42,7 @@
 //!   how `phonon_podcast::PodcastPipeline` already drives TTS).
 
 use crate::AiError;
-use crate::client::{HttpClient, RETRY_BASE_DELAY, env_key, retry_transient};
+use crate::client::{HttpClient, env_key, retry_transient};
 use crate::voice::VoiceConfig;
 use phonon_core::AudioBuffer;
 use serde::{Deserialize, Serialize};
@@ -331,7 +331,7 @@ impl crate::tts::TtsProvider for MiniMaxTts {
     };
 
     let url = format!("{}/t2a_v2", self.client.base_url());
-    let parsed = retry_transient(RETRY_BASE_DELAY, || self.send_t2a(&url, &request)).await?;
+    let parsed = retry_transient(|| self.send_t2a(&url, &request)).await?;
 
     let hex_audio = parsed.data.and_then(|d| d.audio).ok_or_else(|| {
       AiError::Decode("MiniMax T2A response missing data.audio field".to_string())

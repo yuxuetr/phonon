@@ -7,7 +7,7 @@ use tracing::warn;
 /// Attempts per request in [`retry_transient`], including the first one.
 const MAX_ATTEMPTS: u32 = 3;
 /// First backoff delay in [`retry_transient`]; doubles on each retry.
-pub(crate) const RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
+const RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
 /// Upper bound for establishing a connection, separate from the overall
 /// request timeout so an unreachable host fails fast.
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -17,15 +17,20 @@ pub(crate) fn env_key(name: &str) -> Result<String, AiError> {
   std::env::var(name).map_err(|_| AiError::Config(format!("{name} environment variable not set")))
 }
 
-/// Run `op`, retrying with exponential backoff while it fails with a
-/// [transient](AiError::is_transient) error.
+/// Run `op`, retrying with exponential backoff (3 attempts, 500 ms then
+/// 1 s) while it fails with a [transient](AiError::is_transient) error.
 ///
 /// Only wrap requests that are safe to repeat: a retried TTS call costs
 /// another synthesis but has no other side effect.
-pub(crate) async fn retry_transient<T, F, Fut>(
-  base_delay: Duration,
-  mut op: F,
-) -> Result<T, AiError>
+pub async fn retry_transient<T, F, Fut>(op: F) -> Result<T, AiError>
+where
+  F: FnMut() -> Fut,
+  Fut: Future<Output = Result<T, AiError>>,
+{
+  retry_with_base_delay(RETRY_BASE_DELAY, op).await
+}
+
+async fn retry_with_base_delay<T, F, Fut>(base_delay: Duration, mut op: F) -> Result<T, AiError>
 where
   F: FnMut() -> Fut,
   Fut: Future<Output = Result<T, AiError>>,
@@ -103,6 +108,20 @@ impl HttpClient {
     })
   }
 
+  /// Wraps a caller-configured reqwest client, e.g. one with custom proxy,
+  /// TLS or timeout settings.
+  pub fn with_client(
+    inner: Client,
+    api_key: impl Into<String>,
+    base_url: impl Into<String>,
+  ) -> Self {
+    Self {
+      inner,
+      base_url: base_url.into(),
+      api_key: ApiKey::new(api_key),
+    }
+  }
+
   /// Creates a client configured for OpenAI TTS.
   ///
   /// Reads the API key from the `OPENAI_API_KEY` environment variable.
@@ -162,7 +181,7 @@ mod tests {
   async fn run_with_errors(errors: Vec<AiError>) -> (Result<u32, AiError>, u32) {
     let calls = std::cell::Cell::new(0u32);
     let errors = std::cell::RefCell::new(errors.into_iter());
-    let result = retry_transient(Duration::ZERO, || {
+    let result = retry_with_base_delay(Duration::ZERO, || {
       calls.set(calls.get() + 1);
       let next = errors.borrow_mut().next();
       async move {

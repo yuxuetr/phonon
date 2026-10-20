@@ -1,5 +1,5 @@
 use crate::AiError;
-use crate::client::{HttpClient, RETRY_BASE_DELAY, retry_transient};
+use crate::client::{HttpClient, retry_transient};
 use crate::voice::VoiceConfig;
 use futures::StreamExt;
 use phonon_core::AudioBuffer;
@@ -133,7 +133,7 @@ impl TtsProvider for OpenAiTts {
       response_format: "mp3",
     };
 
-    let audio_bytes = retry_transient(RETRY_BASE_DELAY, || async {
+    let audio_bytes = retry_transient(|| async {
       let response = self
         .client
         .inner()

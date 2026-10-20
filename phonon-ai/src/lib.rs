@@ -34,7 +34,7 @@ pub mod tts;
 pub mod voice;
 
 pub use cache::CachingTts;
-pub use client::HttpClient;
+pub use client::{HttpClient, retry_transient};
 pub use edge_tts::EdgeTts;
 pub use elevenlabs::ElevenLabsTts;
 pub use minimax::MiniMaxTts;
