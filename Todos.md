@@ -104,7 +104,7 @@
 - [x] **F6** 重采样降采样时核支撑按 ratio 扩展 ✅ (10 kHz@48→16k 泄漏 -26 → -64 dB)
 - [x] **F7** SIMD 在非 x86_64/aarch64 架构的标量 fallback ✅ (wasm32-wasip1 + node 实跑验证;CI 加 wasm32 lint)
 - [x] **F8** 压缩器(compressor + CompressorPlugin)按帧计算时间常数 ✅ (改为声道联动,同帧同增益)
-- [ ] **F9** `channels == 0` 防护:相关算法返回错误;`read_audio` 无解码数据时报错
+- [x] **F9** `channels == 0` 防护:相关算法返回错误;`read_audio` 无解码数据时报错 ✅ (AudioBuffer 字段私有化未做,需跨全 workspace 重构)
 - [ ] **F10** 引擎:回调不阻塞(try_lock)、控制线程不在锁内分配/释放、`seek` 帧对齐
 
 ### P2 — 质量与架构
