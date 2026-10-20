@@ -348,7 +348,8 @@ impl DspPlugin for HighPassPlugin {
 
 // ─── Compressor ─────────────────────────────────────────────────────
 
-/// Hard-knee compressor plugin.
+/// Hard-knee compressor plugin: [`crate::compress`] for a stream, with
+/// `threshold` given as a linear level and times in milliseconds.
 pub struct CompressorPlugin {
   params: Vec<PluginParam>,
   envelope: f32,
@@ -396,36 +397,22 @@ impl DspPlugin for CompressorPlugin {
   /// Channels are linked: one envelope per frame (driven by the frame's
   /// peak) and one gain for all its channels.
   fn process(&mut self, samples: &mut [f32], sample_rate: u32, channels: u16) {
-    let threshold = self.params[0].current;
-    let ratio = self.params[1].current;
-    let attack_ms = self.params[2].current;
-    let release_ms = self.params[3].current;
-
-    let attack = (-1.0 / (attack_ms * 0.001 * sample_rate as f32)).exp();
-    let release = (-1.0 / (release_ms * 0.001 * sample_rate as f32)).exp();
-
-    for frame in samples.chunks_mut((channels as usize).max(1)) {
-      let input_abs = frame.iter().fold(0.0f32, |m, s| m.max(s.abs()));
-      if input_abs > self.envelope {
-        self.envelope = attack * self.envelope + (1.0 - attack) * input_abs;
-      } else {
-        self.envelope = release * self.envelope + (1.0 - release) * input_abs;
-      }
-
-      if self.envelope > threshold {
-        let over = self.envelope - threshold;
-        let compressed_over = over / ratio;
-        let target = threshold + compressed_over;
-        let gain = if self.envelope > 0.0 {
-          target / self.envelope
-        } else {
-          1.0
-        };
-        for s in frame {
-          *s *= gain;
-        }
-      }
-    }
+    // `threshold` is a linear level in [0, 1]; the floor keeps 0 from
+    // becoming a −∞ dB threshold.
+    let config = crate::CompressorConfig {
+      threshold_db: crate::algorithms::compressor::linear_to_db(self.params[0].current.max(1e-6)),
+      ratio: self.params[1].current,
+      attack_secs: f64::from(self.params[2].current) * 0.001,
+      release_secs: f64::from(self.params[3].current) * 0.001,
+      makeup_gain_db: 0.0,
+    };
+    crate::algorithms::compressor::compress_frames(
+      samples,
+      channels as usize,
+      sample_rate,
+      &config,
+      &mut self.envelope,
+    );
   }
   fn reset(&mut self) {
     self.envelope = 0.0;
@@ -550,6 +537,48 @@ pub fn apply_plugin(plugin: &mut dyn DspPlugin, buffer: &mut AudioBuffer) {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn test_compressor_plugin_ratio_is_in_db() {
+    // Threshold 0.25 (−12.04 dB), 4:1: a steady 0 dBFS input is 12.04 dB
+    // over, so it should come out 3.01 dB over, at −9.03 dB.
+    let mut comp = CompressorPlugin::new(0.25, 4.0, 0.1, 50.0);
+    let mut samples = vec![1.0f32; 4_800];
+    comp.process(&mut samples, 48_000, 1);
+    let out_db = 20.0 * samples[4_799].log10();
+    assert!((out_db + 9.03).abs() < 0.05, "output {out_db} dB");
+  }
+
+  #[test]
+  fn test_compressor_plugin_matches_compress() {
+    let signal: Vec<f32> = (0..9_600)
+      .map(|i| (i as f32 * 0.05).sin() * if i < 4_800 { 0.1 } else { 0.9 })
+      .collect();
+    let mut plugin_out = signal.clone();
+    CompressorPlugin::new(0.5, 4.0, 5.0, 50.0).process(&mut plugin_out, 48_000, 1);
+
+    let mut buffer = AudioBuffer {
+      samples: signal,
+      sample_rate: 48_000,
+      channels: 1,
+    };
+    crate::compress(
+      &mut buffer,
+      &crate::CompressorConfig {
+        threshold_db: 20.0 * 0.5f32.log10(),
+        ratio: 4.0,
+        attack_secs: 0.005,
+        release_secs: 0.05,
+        makeup_gain_db: 0.0,
+      },
+    );
+    for (i, (a, b)) in plugin_out.iter().zip(&buffer.samples).enumerate() {
+      assert!(
+        (a - b).abs() < 1e-5,
+        "sample {i}: plugin {a} vs compress {b}"
+      );
+    }
+  }
 
   #[test]
   fn test_eq_parameter_change_keeps_filter_state() {

@@ -95,12 +95,31 @@ impl CompressorConfig {
 /// // Loud peaks are attenuated; overall dynamics are reduced.
 /// ```
 pub fn compress(buffer: &mut AudioBuffer, config: &CompressorConfig) {
-  if buffer.samples.is_empty() {
+  let mut envelope = 0.0;
+  compress_frames(
+    &mut buffer.samples,
+    buffer.channels as usize,
+    buffer.sample_rate,
+    config,
+    &mut envelope,
+  );
+}
+
+/// The compressor itself, shared with `CompressorPlugin`: `envelope` carries
+/// the detector state across calls so a stream can be fed block by block.
+pub(crate) fn compress_frames(
+  samples: &mut [f32],
+  channels: usize,
+  sample_rate: u32,
+  config: &CompressorConfig,
+  envelope: &mut f32,
+) {
+  if samples.is_empty() {
     return;
   }
 
-  let sample_rate = buffer.sample_rate as f64;
-  let channels = (buffer.channels as usize).max(1);
+  let sample_rate = sample_rate as f64;
+  let channels = channels.max(1);
 
   // Compute smoothing coefficients (per frame) from attack/release times.
   // Using a simple one-pole envelope follower:
@@ -121,23 +140,21 @@ pub fn compress(buffer: &mut AudioBuffer, config: &CompressorConfig) {
   let makeup_linear = db_to_linear(config.makeup_gain_db);
   let ratio = config.ratio.max(1.0); // ratio < 1 would be expansion, clamp to ≥ 1
 
-  let mut envelope: f32 = 0.0;
-
-  for frame in buffer.samples.chunks_mut(channels) {
+  for frame in samples.chunks_mut(channels) {
     let input_abs = frame.iter().fold(0.0f32, |m, s| m.max(s.abs()));
 
     // Envelope follower (peak detector with attack/release)
-    let coeff = if input_abs > envelope {
+    let coeff = if input_abs > *envelope {
       attack_coeff
     } else {
       release_coeff
     };
-    envelope = coeff * envelope + (1.0 - coeff) * input_abs;
+    *envelope = coeff * *envelope + (1.0 - coeff) * input_abs;
 
     // Compute gain reduction
-    let gain = if envelope > threshold_linear {
+    let gain = if *envelope > threshold_linear {
       // How many dB above threshold
-      let over_db = linear_to_db(envelope) - config.threshold_db;
+      let over_db = linear_to_db(*envelope) - config.threshold_db;
       // Compressed overshoot
       let compressed_over_db = over_db / ratio;
       // Target level in dB
@@ -163,12 +180,12 @@ pub fn with_compression(buffer: &AudioBuffer, config: &CompressorConfig) -> Audi
 }
 
 /// Convert decibels to linear amplitude.
-fn db_to_linear(db: f32) -> f32 {
+pub(crate) fn db_to_linear(db: f32) -> f32 {
   10.0f32.powf(db / 20.0)
 }
 
 /// Convert linear amplitude to decibels. Returns -f32::INFINITY for 0.
-fn linear_to_db(linear: f32) -> f32 {
+pub(crate) fn linear_to_db(linear: f32) -> f32 {
   if linear <= 0.0 {
     return f32::NEG_INFINITY;
   }
