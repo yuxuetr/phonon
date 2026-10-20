@@ -124,6 +124,60 @@ pub fn pcm_i16le_to_f32(bytes: &[u8]) -> Vec<f32> {
   out
 }
 
+/// Split `text` into chunks of at most `max_chars` characters for providers
+/// with a per-request limit: at sentence ends where possible, then at
+/// commas, then anywhere. Whitespace-only chunks are dropped.
+pub fn split_text(text: &str, max_chars: usize) -> Vec<String> {
+  const SENTENCE: &[char] = &['。', '！', '？', '；', '!', '?', ';', '\n'];
+  const CLAUSE: &[char] = &['，', '、', '：', ',', ':'];
+  let max_chars = max_chars.max(1);
+
+  let mut pieces = Vec::new();
+  for sentence in split_after(text, SENTENCE) {
+    if sentence.chars().count() <= max_chars {
+      pieces.push(sentence.to_string());
+      continue;
+    }
+    for clause in split_after(sentence, CLAUSE) {
+      let chars: Vec<char> = clause.chars().collect();
+      pieces.extend(
+        chars
+          .chunks(max_chars)
+          .map(|c| c.iter().collect::<String>()),
+      );
+    }
+  }
+
+  let mut chunks: Vec<String> = Vec::new();
+  let mut current = String::new();
+  for piece in pieces {
+    if current.chars().count() + piece.chars().count() > max_chars && !current.is_empty() {
+      chunks.push(std::mem::take(&mut current));
+    }
+    current.push_str(&piece);
+  }
+  chunks.push(current);
+  chunks.retain(|c| !c.trim().is_empty());
+  chunks
+}
+
+/// Split after every occurrence of a delimiter, keeping it with its piece.
+fn split_after<'a>(text: &'a str, delimiters: &[char]) -> Vec<&'a str> {
+  let mut pieces = Vec::new();
+  let mut start = 0;
+  for (i, c) in text.char_indices() {
+    if delimiters.contains(&c) {
+      let end = i + c.len_utf8();
+      pieces.push(&text[start..end]);
+      start = end;
+    }
+  }
+  if start < text.len() {
+    pieces.push(&text[start..]);
+  }
+  pieces
+}
+
 impl TtsProvider for OpenAiTts {
   #[instrument(skip(self, text), fields(text_len = text.len(), voice = %voice.voice_id))]
   async fn synthesize(&self, text: &str, voice: &VoiceConfig) -> Result<AudioBuffer, AiError> {
@@ -328,6 +382,32 @@ mod tests {
     };
     let json = serde_json::to_value(&req).unwrap();
     assert!(json.get("speed").is_none());
+  }
+
+  #[test]
+  fn test_split_text_prefers_sentence_boundaries() {
+    assert_eq!(split_text("短句。", 10), ["短句。"]);
+    assert_eq!(
+      split_text("第一句话。第二句话！第三句。", 10),
+      ["第一句话。第二句话！", "第三句。"]
+    );
+    // A sentence over the limit falls back to commas, then a hard cut.
+    assert_eq!(
+      split_text("一二三，四五六七八。", 5),
+      ["一二三，", "四五六七八", "。"]
+    );
+    assert_eq!(split_text("abcdefg", 3), ["abc", "def", "g"]);
+    assert!(split_text("  \n ", 5).is_empty());
+  }
+
+  #[test]
+  fn test_split_text_respects_limit_and_keeps_text() {
+    let text = "音频处理很有趣，我们今天聊响度。为什么要标准化？因为听众会切换节目！".repeat(7);
+    for max in [1, 7, 20, 64, 600] {
+      let chunks = split_text(&text, max);
+      assert!(chunks.iter().all(|c| c.chars().count() <= max), "max {max}");
+      assert_eq!(chunks.concat(), text, "max {max}");
+    }
   }
 
   #[test]

@@ -88,6 +88,9 @@ CLI 的 `--provider` 只有 edge / openai,server 写死 Edge。国内厂商除 M
     `glm-asr-2512` 只返回文本。
   - MiniMax STT 请求体与 OpenAI 相同，但路径是 `/speech_to_text` → 路径可配。
   - TTS 单次长度上限:Qwen 600 字、GLM 1024、StepFun 1000 → 按句切分。
+    Qwen 预置取 200 而非 600:同一段 594 字的文本三次合成，时长分别为 153、176、248 s,
+    一次长链测试中达到 627 s(正常约 125 s);396 字长出 8–24%;198 字四次都在 40–41 s,
+    与短句按字数折算的 41 s 一致。GLM / StepFun / MiniMax 在 990 字时偏差 ≤6%,而且两次结果一致。
   - 当前 LLM 默认开启思考：小 `max_tokens` 下 content 为空;MiniMax-M2 把 `<think>` 放进 content
     → 预置里带关闭思考的参数，解析前剥掉 `<think>…</think>` 和代码围栏。
   - Qwen / CosyVoice 返回的 WAV 头部长度是占位值，hound 打不开;我们的 `decode_audio` 走 symphonia,

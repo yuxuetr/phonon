@@ -15,7 +15,7 @@
 //! ```
 
 use crate::stt::{SegmentMode, SttProvider, TranscribeOptions, TranscriptResult};
-use crate::tts::TtsProvider;
+use crate::tts::{TtsProvider, split_text};
 use crate::voice::VoiceConfig;
 use crate::{
   AiError, EdgeTts, ElevenLabsTts, HttpClient, MiniMaxTts, OpenAiTts, QwenStt, QwenTts, WhisperStt,
@@ -63,6 +63,7 @@ struct TtsSection {
   model: Option<String>,
   voice: Option<String>,
   format: Option<String>,
+  max_chars: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -124,6 +125,8 @@ struct TtsPreset {
   model: &'static str,
   voice: &'static str,
   format: &'static str,
+  /// Per-request text limit in characters.
+  max_chars: Option<usize>,
 }
 
 struct SttPreset {
@@ -160,6 +163,7 @@ const PRESETS: &[Preset] = &[
       model: "speech-2.8-hd",
       voice: "male-qn-qingse",
       format: "mp3",
+      max_chars: Some(5000),
     }),
     stt: Some(SttPreset {
       protocol: Protocol::OpenAi,
@@ -183,6 +187,9 @@ const PRESETS: &[Preset] = &[
       model: "qwen3-tts-flash",
       voice: "Cherry",
       format: "wav",
+      // The API accepts 600, but near that length the same text comes back
+      // 1.2x to 5x too long; 200 measured stable (docs/providers.md).
+      max_chars: Some(200),
     }),
     stt: Some(SttPreset {
       protocol: Protocol::Qwen,
@@ -206,6 +213,7 @@ const PRESETS: &[Preset] = &[
       model: "glm-tts",
       voice: "tongtong",
       format: "wav",
+      max_chars: Some(1024),
     }),
     stt: Some(SttPreset {
       protocol: Protocol::OpenAi,
@@ -230,6 +238,7 @@ const PRESETS: &[Preset] = &[
       model: "step-tts-2",
       voice: "cixingnansheng",
       format: "wav",
+      max_chars: Some(1000),
     }),
     stt: Some(SttPreset {
       protocol: Protocol::OpenAi,
@@ -264,6 +273,7 @@ const PRESETS: &[Preset] = &[
       model: "tts-1",
       voice: "alloy",
       format: "mp3",
+      max_chars: Some(4096),
     }),
     stt: Some(SttPreset {
       protocol: Protocol::OpenAi,
@@ -287,6 +297,7 @@ const PRESETS: &[Preset] = &[
       model: "eleven_multilingual_v2",
       voice: "21m00Tcm4TlvDq8ikWAM",
       format: "mp3",
+      max_chars: Some(5000),
     }),
     stt: None,
     llm: None,
@@ -300,6 +311,7 @@ const PRESETS: &[Preset] = &[
       model: "",
       voice: "zh-CN-XiaoxiaoNeural",
       format: "mp3",
+      max_chars: None,
     }),
     stt: None,
     llm: None,
@@ -513,6 +525,7 @@ impl Config {
       provider: ep.provider,
       model,
       voice,
+      max_chars: section.max_chars.or(defaults.and_then(|d| d.max_chars)),
     })
   }
 
@@ -650,6 +663,7 @@ pub struct AnyTts {
   provider: String,
   model: String,
   voice: String,
+  max_chars: Option<usize>,
 }
 
 impl AnyTts {
@@ -669,6 +683,33 @@ impl AnyTts {
     &self.voice
   }
 
+  /// Per-request text limit; longer text is synthesized in chunks.
+  pub fn max_chars(&self) -> Option<usize> {
+    self.max_chars
+  }
+
+  /// `text` as one request, or as sentence chunks within `max_chars`.
+  /// Chunks with nothing to speak (punctuation only) are skipped.
+  fn chunks(&self, text: &str) -> Vec<String> {
+    match self.max_chars {
+      Some(max) if text.chars().count() > max => split_text(text, max)
+        .into_iter()
+        .filter(|c| c.chars().any(char::is_alphanumeric))
+        .collect(),
+      _ => vec![text.to_string()],
+    }
+  }
+
+  async fn synthesize_one(&self, text: &str, voice: &VoiceConfig) -> Result<AudioBuffer, AiError> {
+    match &self.backend {
+      TtsBackend::OpenAi(p) => p.synthesize(text, &self.voice_for_request(voice)).await,
+      TtsBackend::MiniMax(p) => p.synthesize(text, voice).await,
+      TtsBackend::Qwen(p) => p.synthesize(text, voice).await,
+      TtsBackend::Edge(p) => p.synthesize(text, voice).await,
+      TtsBackend::ElevenLabs(p) => p.synthesize(text, voice).await,
+    }
+  }
+
   /// OpenAI-protocol servers read the model from the voice; the configured
   /// model wins over `VoiceConfig`'s OpenAI default.
   fn voice_for_request(&self, voice: &VoiceConfig) -> VoiceConfig {
@@ -681,21 +722,41 @@ impl AnyTts {
 
 impl TtsProvider for AnyTts {
   async fn synthesize(&self, text: &str, voice: &VoiceConfig) -> Result<AudioBuffer, AiError> {
-    match &self.backend {
-      TtsBackend::OpenAi(p) => p.synthesize(text, &self.voice_for_request(voice)).await,
-      TtsBackend::MiniMax(p) => p.synthesize(text, voice).await,
-      TtsBackend::Qwen(p) => p.synthesize(text, voice).await,
-      TtsBackend::Edge(p) => p.synthesize(text, voice).await,
-      TtsBackend::ElevenLabs(p) => p.synthesize(text, voice).await,
+    let mut chunks = self.chunks(text).into_iter();
+    let first = chunks.next().unwrap_or_default();
+    let mut audio = self.synthesize_one(&first, voice).await?;
+    for chunk in chunks {
+      let next = self.synthesize_one(&chunk, voice).await?;
+      if (next.sample_rate, next.channels) != (audio.sample_rate, audio.channels) {
+        return Err(AiError::Decode(format!(
+          "chunk format changed mid-text: {} Hz / {} ch after {} Hz / {} ch",
+          next.sample_rate, next.channels, audio.sample_rate, audio.channels
+        )));
+      }
+      audio.samples.extend_from_slice(&next.samples);
     }
+    Ok(audio)
   }
 
+  /// Chunked text streams one buffer per chunk; otherwise the backend's
+  /// own streaming is used.
   async fn synthesize_streaming(
     &self,
     text: &str,
     voice: &VoiceConfig,
     tx: tokio::sync::mpsc::Sender<Result<AudioBuffer, AiError>>,
   ) -> Result<(), AiError> {
+    let chunks = self.chunks(text);
+    if chunks.len() > 1 {
+      for chunk in chunks {
+        let audio = self.synthesize_one(&chunk, voice).await;
+        let failed = audio.is_err();
+        if tx.send(audio).await.is_err() || failed {
+          break;
+        }
+      }
+      return Ok(());
+    }
     match &self.backend {
       TtsBackend::OpenAi(p) => {
         p.synthesize_streaming(text, &self.voice_for_request(voice), tx)
@@ -787,6 +848,7 @@ mod tests {
     let env = env_of(&["STEP_API_KEY", "ZHIPU_API_KEY", "DEEPSEEK_API_KEY"]);
     let tts = config.tts_with(&env).expect("tts");
     assert_eq!((tts.provider(), tts.model()), ("glm", "glm-tts"));
+    assert_eq!(tts.max_chars(), Some(1024));
     assert_eq!(config.stt_with(&env).expect("stt").provider(), "glm");
     assert_eq!(config.llm_with(&env).expect("llm").provider, "glm");
 

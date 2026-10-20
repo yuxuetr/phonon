@@ -46,7 +46,7 @@ pub use sound_gen::{HttpSoundGen, ReplicateSoundGen, SoundGenProvider, SoundPres
 pub use stt::{
   SegmentMode, SttProvider, TranscribeOptions, TranscriptResult, TranscriptSegment, WhisperStt,
 };
-pub use tts::{OpenAiTts, TtsProvider, pcm_i16le_to_f32};
+pub use tts::{OpenAiTts, TtsProvider, pcm_i16le_to_f32, split_text};
 pub use voice::VoiceConfig;
 
 use thiserror::Error;
