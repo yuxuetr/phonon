@@ -217,7 +217,8 @@ impl DspPlugin for VolumePlugin {
 /// First-order low-pass filter plugin.
 pub struct LowPassPlugin {
   params: Vec<PluginParam>,
-  prev: [f64; 2],
+  /// One state per channel, sized on the first block.
+  prev: Vec<f64>,
 }
 
 impl LowPassPlugin {
@@ -226,7 +227,7 @@ impl LowPassPlugin {
   pub fn new(cutoff_hz: f32) -> Self {
     Self {
       params: vec![PluginParam::new("cutoff_hz", 20.0, 20000.0, cutoff_hz)],
-      prev: [0.0; 2],
+      prev: Vec::new(),
     }
   }
 }
@@ -261,19 +262,19 @@ impl DspPlugin for LowPassPlugin {
     let alpha = dt / (rc + dt);
     let ch = channels as usize;
 
-    for i in (0..samples.len()).step_by(ch.max(1)) {
-      for c in 0..ch.min(2) {
-        let idx = i + c;
-        if idx < samples.len() {
-          let input = samples[idx] as f64;
-          self.prev[c] += alpha * (input - self.prev[c]);
-          samples[idx] = self.prev[c] as f32;
-        }
+    if self.prev.len() != ch {
+      self.prev = vec![0.0; ch];
+    }
+
+    for frame in samples.chunks_mut(ch.max(1)) {
+      for (sample, prev) in frame.iter_mut().zip(&mut self.prev) {
+        *prev += alpha * (*sample as f64 - *prev);
+        *sample = *prev as f32;
       }
     }
   }
   fn reset(&mut self) {
-    self.prev = [0.0; 2];
+    self.prev.fill(0.0);
   }
 }
 
@@ -282,8 +283,8 @@ impl DspPlugin for LowPassPlugin {
 /// First-order high-pass filter plugin.
 pub struct HighPassPlugin {
   params: Vec<PluginParam>,
-  prev_input: [f64; 2],
-  prev_output: [f64; 2],
+  /// Previous (input, output) per channel, sized on the first block.
+  prev: Vec<(f64, f64)>,
 }
 
 impl HighPassPlugin {
@@ -292,8 +293,7 @@ impl HighPassPlugin {
   pub fn new(cutoff_hz: f32) -> Self {
     Self {
       params: vec![PluginParam::new("cutoff_hz", 20.0, 20000.0, cutoff_hz)],
-      prev_input: [0.0; 2],
-      prev_output: [0.0; 2],
+      prev: Vec::new(),
     }
   }
 }
@@ -328,21 +328,21 @@ impl DspPlugin for HighPassPlugin {
     let alpha = rc / (rc + dt);
     let ch = channels as usize;
 
-    for i in (0..samples.len()).step_by(ch.max(1)) {
-      for c in 0..ch.min(2) {
-        let idx = i + c;
-        if idx < samples.len() {
-          let input = samples[idx] as f64;
-          self.prev_output[c] = alpha * (self.prev_output[c] + input - self.prev_input[c]);
-          self.prev_input[c] = input;
-          samples[idx] = self.prev_output[c] as f32;
-        }
+    if self.prev.len() != ch {
+      self.prev = vec![(0.0, 0.0); ch];
+    }
+
+    for frame in samples.chunks_mut(ch.max(1)) {
+      for (sample, (prev_input, prev_output)) in frame.iter_mut().zip(&mut self.prev) {
+        let input = *sample as f64;
+        *prev_output = alpha * (*prev_output + input - *prev_input);
+        *prev_input = input;
+        *sample = *prev_output as f32;
       }
     }
   }
   fn reset(&mut self) {
-    self.prev_input = [0.0; 2];
-    self.prev_output = [0.0; 2];
+    self.prev.fill((0.0, 0.0));
   }
 }
 
@@ -537,6 +537,42 @@ pub fn apply_plugin(plugin: &mut dyn DspPlugin, buffer: &mut AudioBuffer) {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn test_filter_plugins_process_every_channel() {
+    // Channel 2 of 3 carries Nyquist for the low-pass and DC for the
+    // high-pass; both should be removed there as on channel 0.
+    let frames = 4_800;
+    let mut lp_in = Vec::with_capacity(frames * 3);
+    let mut hp_in = Vec::with_capacity(frames * 3);
+    for i in 0..frames {
+      let nyquist = if i % 2 == 0 { 0.5 } else { -0.5 };
+      lp_in.extend([nyquist, 0.0, nyquist]);
+      hp_in.extend([0.5, 0.0, 0.5]);
+    }
+    LowPassPlugin::new(1_000.0).process(&mut lp_in, 48_000, 3);
+    HighPassPlugin::new(1_000.0).process(&mut hp_in, 48_000, 3);
+
+    let tail = |s: &[f32], ch: usize| {
+      s[(frames - 100) * 3..]
+        .iter()
+        .skip(ch)
+        .step_by(3)
+        .fold(0.0f32, |m, x| m.max(x.abs()))
+    };
+    for ch in [0, 2] {
+      assert!(
+        tail(&lp_in, ch) < 0.1,
+        "low-pass ch{ch}: {}",
+        tail(&lp_in, ch)
+      );
+      assert!(
+        tail(&hp_in, ch) < 0.01,
+        "high-pass ch{ch}: {}",
+        tail(&hp_in, ch)
+      );
+    }
+  }
 
   #[test]
   fn test_compressor_plugin_ratio_is_in_db() {
@@ -772,7 +808,7 @@ mod tests {
     lp.process(&mut samples, 44100, 1);
     // After reset, state should be zeroed
     lp.reset();
-    assert_eq!(lp.prev, [0.0; 2]);
+    assert!(lp.prev.iter().all(|&p| p == 0.0));
   }
 
   #[test]
