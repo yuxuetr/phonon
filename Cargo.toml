@@ -61,7 +61,7 @@ mp3lame-encoder = "0.2"
 flacenc = { version = "0.5", default-features = false }
 vorbis_rs = "0.5"
 fdk-aac = "0.6"
-msedge-tts = "0.3"
+msedge-tts = { version = "0.4", default-features = false, features = ["tokio-runtime"] }
 id3 = "1.16"
 metaflac = "0.2"
 blake3 = "1"

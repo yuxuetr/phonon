@@ -96,7 +96,7 @@ impl crate::tts::TtsProvider for EdgeTts {
     // cancels a stalled connection instead of leaking a blocking thread.
     let audio_bytes = retry_transient(RETRY_BASE_DELAY, || async {
       let synthesis = async {
-        let mut client = msedge_tts::tts::client::connect_async()
+        let mut client = msedge_tts::tts::client::tokio_runtime::connect_async()
           .await
           .map_err(|e| AiError::Http(format!("Edge TTS connection failed: {e}")))?;
         client
