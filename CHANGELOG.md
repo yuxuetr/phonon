@@ -3,6 +3,11 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 ---
+## v0.7.4 (unreleased)
+
+- reqwest 0.12 → 0.13, so the workspace no longer compiles two HTTP stacks (msedge-tts already used 0.13).
+  TLS is now rustls; native-tls / hyper-tls are gone from the tree.
+
 ## v0.7.3 - 2026-10-20 — architecture re-evaluation
 
 Items H1–H6 in [Todos.md](./Todos.md).
