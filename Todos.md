@@ -123,7 +123,8 @@
     未改:provider 的单段解码(每段几秒音频,毫秒级);MCP 请求串行处理,阻塞不影响其他请求——**重估条件**:MCP 改为并发处理请求
 - [x] **G2** Edge TTS 连接/合成超时;MiniMax 限流与 Replicate 轮询的重试 + 退避;`HttpClient` 加 `connect_timeout`
   - DONE: `retry_transient`(3 次,500ms 起指数退避)用于 OpenAI/ElevenLabs/MiniMax/Edge 合成与 Replicate 轮询;MiniMax 1002/1039 → 429;Edge 改 async client + 60s 超时;所有 reqwest client 加 10s connect timeout
-- [ ] **G3** 测试中 `unsafe { env::remove_var }` 改为不依赖进程环境的构造方式(并行测试竞争)
+- [x] **G3** 测试中 `unsafe { env::remove_var }` 改为不依赖进程环境的构造方式(并行测试竞争)
+  - DONE: 4 处构造函数统一走 `env_key()`;删除 3 个 `remove_var` 测试,改为对一个从不设置的变量名测试 `env_key`
 - [ ] **G4** 引擎:`append_samples` 不在锁内扩容;`ParametricEqPlugin` 不在 `process` 内重建 / 分配
 - [ ] **G5** Studio:EQ / 效果 / 播放前重采样 / 整轨 FFT 移出 UI 线程
 - [ ] **G6** 管线:`assemble_segments` 的 O(n²) 合并;`generate_episode` 改用并发 TTS(时间轴已按 span 计算,不再需要顺序合成)
