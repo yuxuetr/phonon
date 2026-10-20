@@ -91,15 +91,19 @@ pub fn write_aac<P: AsRef<Path>>(path: P, buffer: &AudioBuffer, config: &AacConf
     offset += frame_size;
   }
 
-  // Flush: encode with empty input to get any remaining data
-  let empty: Vec<i16> = Vec::new();
-  loop {
+  // The encoder holds `nDelay` samples of look-ahead. fdk-aac only drains
+  // it when told the input ended (numInSamples = -1), which this binding
+  // cannot express, so push it out with silent frames instead.
+  let delay_per_channel = encoder
+    .info()
+    .map_err(|e| PhononError::Wav(format!("AAC encoder info error: {e:?}")))?
+    .nDelay as usize;
+  let flush_frames = delay_per_channel.div_ceil(1024) + 1;
+  let silence = vec![0i16; frame_size];
+  for _ in 0..flush_frames {
     let info = encoder
-      .encode(&empty, &mut out_buf)
+      .encode(&silence, &mut out_buf)
       .map_err(|e| PhononError::Wav(format!("AAC flush error: {e:?}")))?;
-    if info.output_size == 0 {
-      break;
-    }
     writer
       .write_all(&out_buf[..info.output_size])
       .map_err(PhononError::Io)?;
@@ -114,6 +118,38 @@ pub fn write_aac<P: AsRef<Path>>(path: P, buffer: &AudioBuffer, config: &AacConf
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn test_write_aac_keeps_the_tail() -> Result<()> {
+    // Silence, then a tone in the final 0.2 s: the encoder's look-ahead
+    // holds exactly that tail until it is flushed.
+    let sample_rate = 44100_u32;
+    let samples: Vec<f32> = (0..sample_rate as usize)
+      .map(|i| {
+        if i < 35_280 {
+          0.0
+        } else {
+          (i as f32 * 440.0 * std::f32::consts::TAU / sample_rate as f32).sin() * 0.5
+        }
+      })
+      .collect();
+    let energy = |s: &[f32]| s.iter().map(|x| (x * x) as f64).sum::<f64>();
+    let input_energy = energy(&samples);
+    let buffer = AudioBuffer {
+      samples,
+      sample_rate,
+      channels: 1,
+    };
+
+    let tmp = std::env::temp_dir().join("phonon_test_tail.aac");
+    write_aac(&tmp, &buffer, &AacConfig::default())?;
+    let decoded = crate::read_audio(&tmp)?;
+    let _ = std::fs::remove_file(&tmp);
+
+    let ratio = energy(&decoded.samples) / input_energy;
+    assert!(ratio > 0.9, "tail lost: decoded/input energy = {ratio:.3}");
+    Ok(())
+  }
 
   #[test]
   fn test_write_aac_mono() -> Result<()> {

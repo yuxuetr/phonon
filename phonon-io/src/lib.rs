@@ -9,7 +9,7 @@ use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 #[cfg(feature = "aac")]
 pub mod aac;
@@ -94,6 +94,8 @@ pub fn read_audio<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
   let mut sample_rate = 0;
   let mut channels = 0;
 
+  let mut skipped = 0usize;
+
   // The decode loop.
   loop {
     // Get the next packet from the media format.
@@ -134,10 +136,25 @@ pub fn read_audio<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
         // The samples are now floating point numbers.
         samples.extend_from_slice(sample_buf.samples());
       }
-      Err(Error::IoError(e)) => return Err(PhononError::Io(e)),
-      Err(Error::DecodeError(e)) => return Err(PhononError::Wav(format!("Decode error: {}", e))),
+      // A malformed packet (bad CRC / bitstream, or reading past the end
+      // of the in-memory packet) costs that packet only, as symphonia
+      // documents these errors as recoverable.
+      Err(Error::DecodeError(e)) => {
+        skipped += 1;
+        warn!(error = %e, "skipping undecodable packet");
+      }
+      Err(Error::IoError(e)) => {
+        skipped += 1;
+        warn!(error = %e, "skipping truncated packet");
+      }
       Err(e) => return Err(PhononError::Wav(format!("Unhandled decode error: {}", e))),
     }
+  }
+
+  if samples.is_empty() && skipped > 0 {
+    return Err(PhononError::Wav(format!(
+      "No packet could be decoded ({skipped} skipped)"
+    )));
   }
 
   if sample_rate == 0 || channels == 0 {
@@ -249,6 +266,41 @@ mod tests {
     let path = std::env::temp_dir().join("phonon_io_no_aac_feature.aac");
     let err = write_audio(&path, &AudioBuffer::new(44_100, 1, 0));
     assert!(matches!(err, Err(PhononError::Wav(msg)) if msg.contains("`aac` feature")));
+  }
+
+  #[test]
+  fn test_read_skips_corrupt_packets() -> Result<()> {
+    let buffer = AudioBuffer {
+      samples: (0..88_200)
+        .map(|i| (i as f32 * 0.0627).sin() * 0.5)
+        .collect(),
+      sample_rate: 44_100,
+      channels: 1,
+    };
+    let path = std::env::temp_dir().join("phonon_io_corrupt_packet.mp3");
+    write_audio(&path, &buffer)?;
+    let original = std::fs::read(&path).map_err(PhononError::Io)?;
+
+    // Each of these 64-byte scribbles makes symphonia's MP3 decoder reject
+    // one packet with a DecodeError, which used to fail the whole read.
+    let mut results = Vec::new();
+    for k in [34, 53, 57] {
+      let mut bytes = original.clone();
+      let at = original.len() * k / 61;
+      for b in &mut bytes[at..at + 64] {
+        *b ^= 0xA5;
+      }
+      std::fs::write(&path, &bytes).map_err(PhononError::Io)?;
+      results.push(read_audio(&path));
+    }
+    let _ = std::fs::remove_file(&path);
+
+    for decoded in results {
+      let decoded = decoded?;
+      // A dropped packet or two (1152 samples each) is fine.
+      assert!(decoded.samples.len() >= buffer.samples.len() - 2 * 1152);
+    }
+    Ok(())
   }
 
   #[test]
