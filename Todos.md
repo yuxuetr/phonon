@@ -136,5 +136,6 @@
 - [x] **G8** AAC 结束时未 flush 编码器尾部;`read_audio` 遇单个坏包即整体失败(应跳过 DecodeError)
   - DONE: AAC 按 `nDelay` 补静音帧冲出尾部(解码/输入能量比 0.872 → 0.997);解码错误跳过该包。顺带修复:FLAC STREAMINFO 最小块长导致 phonon 写出的 FLAC 无法被 `read_audio` 读回(d69a41d)。
     未覆盖:OGG 单页 CRC 损坏会在 symphonia 打开阶段失败——**重估条件**:symphonia 的 OggReader 支持容错打开
-- [ ] **G9** MCP:`AssetRegistry` 无容量上限;每个工具调用整块 clone PCM 只为构造元数据
+- [x] **G9** MCP:`AssetRegistry` 无容量上限;每个工具调用整块 clone PCM 只为构造元数据
+  - DONE: 默认 1 GiB PCM 上限 + `RegistryFull`;9 处 `insert(buf.clone())` 改为 `store()` 先取元数据再 move
 - [ ] **G10** Replicate 轮询 / 下载未检查 HTTP 状态码;ElevenLabs `voice_id` 未转义直接拼进 URL
