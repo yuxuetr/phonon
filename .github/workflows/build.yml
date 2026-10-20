@@ -41,6 +41,10 @@ jobs:
         run: cargo check --workspace --exclude phonon-studio
       - name: Lint rust sources
         run: cargo clippy --workspace --exclude phonon-studio --all-targets --tests --benches -- -D warnings
+      - name: Lint phonon-core SIMD scalar fallback (wasm32)
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo clippy -p phonon-core --lib --no-default-features --features simd --target wasm32-unknown-unknown -- -D warnings
       - name: Execute rust tests
         run: cargo nextest run --workspace --exclude phonon-studio
       - name: Execute doc tests

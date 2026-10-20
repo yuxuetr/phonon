@@ -1,11 +1,21 @@
 //! SIMD-accelerated helpers for hot audio DSP operations.
 //!
 //! Provides 4-wide SIMD implementations (NEON on aarch64, SSE on x86_64)
-//! with scalar fallback for remainder elements. Only compiled when the
-//! `simd` feature is enabled.
+//! with scalar fallback for remainder elements — and for the whole slice on
+//! other architectures. Only compiled when the `simd` feature is enabled.
 
 /// SIMD lane width (4 × f32 for both NEON and SSE).
 const LANES: usize = 4;
+
+/// Index where the scalar loop takes over: after the 4-wide chunks on
+/// architectures with a SIMD path, or 0 (the whole slice) elsewhere.
+const fn scalar_start(len: usize) -> usize {
+  if cfg!(any(target_arch = "aarch64", target_arch = "x86_64")) {
+    len - len % LANES
+  } else {
+    0
+  }
+}
 
 // ─── Multiply + clamp ──────────────────────────────────────────────
 // Used by: adjust_volume, normalize (scale phase)
@@ -14,7 +24,6 @@ const LANES: usize = 4;
 pub(crate) fn simd_mul_clamp(samples: &mut [f32], gain: f32) {
   let len = samples.len();
   let chunks = len / LANES;
-  let remainder = len % LANES;
 
   #[cfg(target_arch = "aarch64")]
   {
@@ -60,7 +69,7 @@ pub(crate) fn simd_mul_clamp(samples: &mut [f32], gain: f32) {
   let _ = chunks; // suppress unused warning
 
   // Scalar remainder
-  let start = len - remainder;
+  let start = scalar_start(len);
   for s in &mut samples[start..] {
     *s = (*s * gain).clamp(-1.0, 1.0);
   }
@@ -73,7 +82,6 @@ pub(crate) fn simd_mul_clamp(samples: &mut [f32], gain: f32) {
 pub(crate) fn simd_mul(samples: &mut [f32], gain: f32) {
   let len = samples.len();
   let chunks = len / LANES;
-  let remainder = len % LANES;
 
   #[cfg(target_arch = "aarch64")]
   {
@@ -106,7 +114,7 @@ pub(crate) fn simd_mul(samples: &mut [f32], gain: f32) {
   #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
   let _ = chunks;
 
-  let start = len - remainder;
+  let start = scalar_start(len);
   for s in &mut samples[start..] {
     *s *= gain;
   }
@@ -124,7 +132,6 @@ pub(crate) fn simd_add_clamp(a: &[f32], b: &[f32], out: &mut [f32]) {
 
   let len = a.len();
   let chunks = len / LANES;
-  let remainder = len % LANES;
 
   #[cfg(target_arch = "aarch64")]
   {
@@ -169,7 +176,7 @@ pub(crate) fn simd_add_clamp(a: &[f32], b: &[f32], out: &mut [f32]) {
   #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
   let _ = chunks;
 
-  let start = len - remainder;
+  let start = scalar_start(len);
   for i in start..len {
     out[i] = (a[i] + b[i]).clamp(-1.0, 1.0);
   }
@@ -182,8 +189,8 @@ pub(crate) fn simd_add_clamp(a: &[f32], b: &[f32], out: &mut [f32]) {
 pub(crate) fn simd_max_abs(samples: &[f32]) -> f32 {
   let len = samples.len();
   let chunks = len / LANES;
-  let remainder = len % LANES;
-  // On aarch64/x86_64 the SIMD block sets this; on other arches it stays 0.0.
+  // Set by the SIMD block on aarch64/x86_64; elsewhere the scalar loop
+  // covers the whole slice starting from 0.
   #[allow(unused_assignments)]
   let mut global_max = 0.0f32;
 
@@ -229,7 +236,7 @@ pub(crate) fn simd_max_abs(samples: &[f32]) -> f32 {
   let _ = chunks;
 
   // Scalar remainder
-  let start = len - remainder;
+  let start = scalar_start(len);
   for &s in &samples[start..] {
     let a = s.abs();
     if a > global_max {
@@ -249,8 +256,8 @@ pub(crate) fn simd_max_abs(samples: &[f32]) -> f32 {
 pub(crate) fn simd_sum_sq(samples: &[f32]) -> f64 {
   let len = samples.len();
   let chunks = len / LANES;
-  let remainder = len % LANES;
-  // On aarch64/x86_64 the SIMD block sets this; on other arches it stays 0.0.
+  // Set by the SIMD block on aarch64/x86_64; elsewhere the scalar loop
+  // covers the whole slice starting from 0.
   #[allow(unused_assignments)]
   let mut sum: f64 = 0.0;
 
@@ -299,7 +306,7 @@ pub(crate) fn simd_sum_sq(samples: &[f32]) -> f64 {
   let _ = chunks;
 
   // Scalar remainder.
-  let start = len - remainder;
+  let start = scalar_start(len);
   for &s in &samples[start..] {
     sum += (s as f64) * (s as f64);
   }
@@ -318,7 +325,6 @@ pub(crate) fn simd_sum_sq(samples: &[f32]) -> f64 {
 pub(crate) fn simd_mul_interleaved_pair(samples: &mut [f32], g_even: f32, g_odd: f32) {
   let len = samples.len();
   let chunks = len / LANES;
-  let remainder = len % LANES;
 
   #[cfg(target_arch = "aarch64")]
   {
@@ -353,10 +359,9 @@ pub(crate) fn simd_mul_interleaved_pair(samples: &mut [f32], g_even: f32, g_odd:
   #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
   let _ = chunks;
 
-  // Scalar remainder — preserve correct even/odd assignment given the
-  // chunk loop processed `chunks * LANES` samples (LANES is even, so
-  // parity is preserved).
-  let start = len - remainder;
+  // Scalar tail — `start` is a multiple of LANES (even), so `start + i`
+  // keeps the even/odd channel assignment.
+  let start = scalar_start(len);
   for (i, s) in samples[start..].iter_mut().enumerate() {
     *s *= if (start + i) % 2 == 0 { g_even } else { g_odd };
   }
@@ -372,7 +377,6 @@ pub(crate) fn simd_mul_interleaved_pair(samples: &mut [f32], g_even: f32, g_odd:
 pub(crate) fn simd_mul_ramp(samples: &mut [f32], start_gain: f32, gain_step: f32) {
   let len = samples.len();
   let chunks = len / LANES;
-  let remainder = len % LANES;
 
   #[cfg(target_arch = "aarch64")]
   {
@@ -423,7 +427,7 @@ pub(crate) fn simd_mul_ramp(samples: &mut [f32], start_gain: f32, gain_step: f32
   let _ = chunks;
 
   // Scalar remainder
-  let start = len - remainder;
+  let start = scalar_start(len);
   for (i, s) in samples[start..].iter_mut().enumerate() {
     let gain = start_gain + ((start + i) as f32) * gain_step;
     *s *= gain;
