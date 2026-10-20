@@ -181,6 +181,8 @@ pub struct OpenAiScriptGenerator {
   client: phonon_ai::HttpClient,
   /// Chat model to use (e.g. "gpt-4o", "gpt-4o-mini").
   model: String,
+  /// Vendor-specific fields merged into the request body.
+  extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl OpenAiScriptGenerator {
@@ -188,10 +190,7 @@ impl OpenAiScriptGenerator {
   pub fn from_env() -> Result<Self, PodcastError> {
     let client =
       phonon_ai::HttpClient::openai().map_err(|e| PodcastError::Script(e.to_string()))?;
-    Ok(Self {
-      client,
-      model: "gpt-4o-mini".to_string(),
-    })
+    Ok(Self::with_client(client, "gpt-4o-mini"))
   }
 
   /// Create with a specific API key and model.
@@ -202,10 +201,7 @@ impl OpenAiScriptGenerator {
   ) -> Result<Self, PodcastError> {
     let client = phonon_ai::HttpClient::new(api_key, base_url, Some(120))
       .map_err(|e| PodcastError::Script(e.to_string()))?;
-    Ok(Self {
-      client,
-      model: model.into(),
-    })
+    Ok(Self::with_client(client, model))
   }
 
   /// Use a caller-configured client (proxy, TLS, timeouts).
@@ -213,7 +209,16 @@ impl OpenAiScriptGenerator {
     Self {
       client,
       model: model.into(),
+      extra: serde_json::Map::new(),
     }
+  }
+
+  /// Merge vendor-specific fields into every request body, e.g.
+  /// `{"thinking": {"type": "disabled"}}` for DeepSeek / GLM or
+  /// `{"enable_thinking": false}` for Qwen. They override the defaults.
+  pub fn with_extra_body(mut self, extra: serde_json::Map<String, serde_json::Value>) -> Self {
+    self.extra = extra;
+    self
   }
 
   /// Set the chat model.
@@ -278,13 +283,16 @@ impl ScriptGenerator for OpenAiScriptGenerator {
         {"role": "user", "content": user_message}
     ]);
 
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "model": self.model,
         "messages": messages,
         "temperature": 0.8,
         "max_tokens": 4096,
         "response_format": {"type": "json_object"}
     });
+    if let Some(fields) = body.as_object_mut() {
+      fields.extend(self.extra.clone());
+    }
 
     let url = format!("{}/chat/completions", self.client.base_url());
 
@@ -327,11 +335,12 @@ impl ScriptGenerator for OpenAiScriptGenerator {
     info!(content_len = content.len(), "Received LLM script response");
 
     // Parse the LLM JSON output
-    let llm_response: LlmScriptResponse = serde_json::from_str(content).map_err(|e| {
-      PodcastError::Script(format!(
-        "Failed to parse LLM script JSON: {e}\nRaw: {content}"
-      ))
-    })?;
+    let llm_response: LlmScriptResponse =
+      serde_json::from_str(json_payload(content)).map_err(|e| {
+        PodcastError::Script(format!(
+          "Failed to parse LLM script JSON: {e}\nRaw: {content}"
+        ))
+      })?;
 
     // Convert to PodcastScript
     let mut speakers = HashMap::new();
@@ -373,6 +382,19 @@ impl ScriptGenerator for OpenAiScriptGenerator {
     );
 
     Ok(script)
+  }
+}
+
+/// The JSON object inside a chat reply: reasoning models may prefix
+/// `<think>…</think>` (MiniMax-M2) and some wrap the object in a code fence.
+fn json_payload(content: &str) -> &str {
+  let rest = match content.rfind("</think>") {
+    Some(end) => &content[end + "</think>".len()..],
+    None => content,
+  };
+  match (rest.find('{'), rest.rfind('}')) {
+    (Some(start), Some(end)) if start < end => &rest[start..=end],
+    _ => rest.trim(),
   }
 }
 
@@ -495,6 +517,16 @@ mod tests {
     let req = ScriptRequest::new("Test").with_system_prompt("Custom system prompt for testing");
     let prompt = OpenAiScriptGenerator::build_system_prompt(&req);
     assert_eq!(prompt, "Custom system prompt for testing");
+  }
+
+  #[test]
+  fn test_json_payload_strips_think_and_fences() {
+    assert_eq!(json_payload(r#"{"a":1}"#), r#"{"a":1}"#);
+    assert_eq!(
+      json_payload("<think>maybe {x}</think>\n```json\n{\"a\":{\"b\":1}}\n```"),
+      r#"{"a":{"b":1}}"#
+    );
+    assert_eq!(json_payload("  no json  "), "no json");
   }
 
   #[test]
