@@ -133,6 +133,8 @@
   - DONE: 单个预分配 Vec 内追加 + 原地交叉淡化(与旧实现逐样本对拍);`synthesize_segments()` 供两个入口共用并发合成
 - [x] **G7** LUFS 真峰值相位偏移(0.375/0.625/0.875 → 0.25/0.5/0.75)
   - DONE: sinc/窗中心改为 24;fs/4 中点 ISP 0.99 由 0.9766 (−0.12 dB 低读) → 0.9959
-- [ ] **G8** AAC 结束时未 flush 编码器尾部;`read_audio` 遇单个坏包即整体失败(应跳过 DecodeError)
+- [x] **G8** AAC 结束时未 flush 编码器尾部;`read_audio` 遇单个坏包即整体失败(应跳过 DecodeError)
+  - DONE: AAC 按 `nDelay` 补静音帧冲出尾部(尾部能量损失 13% → <10% 门限内);解码错误跳过该包。顺带修复:FLAC STREAMINFO 最小块长导致 phonon 写出的 FLAC 无法被 `read_audio` 读回(d69a41d)。
+    未覆盖:OGG 单页 CRC 损坏会在 symphonia 打开阶段失败——**重估条件**:symphonia 的 OggReader 支持容错打开
 - [ ] **G9** MCP:`AssetRegistry` 无容量上限;每个工具调用整块 clone PCM 只为构造元数据
 - [ ] **G10** Replicate 轮询 / 下载未检查 HTTP 状态码;ElevenLabs `voice_id` 未转义直接拼进 URL
