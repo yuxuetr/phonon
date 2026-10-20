@@ -213,6 +213,12 @@ impl OpenAiScriptGenerator {
     }
   }
 
+  /// Use an endpoint resolved from `phonon_ai::Config` (client, model and
+  /// vendor fields).
+  pub fn from_endpoint(endpoint: phonon_ai::ChatEndpoint) -> Self {
+    Self::with_client(endpoint.client, endpoint.model).with_extra_body(endpoint.extra)
+  }
+
   /// Merge vendor-specific fields into every request body, e.g.
   /// `{"thinking": {"type": "disabled"}}` for DeepSeek / GLM or
   /// `{"enable_thinking": false}` for Qwen. They override the defaults.

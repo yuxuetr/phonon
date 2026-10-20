@@ -25,6 +25,7 @@
 
 pub mod cache;
 pub mod client;
+pub mod config;
 pub mod edge_tts;
 pub mod elevenlabs;
 pub mod minimax;
@@ -36,6 +37,7 @@ pub mod voice;
 
 pub use cache::CachingTts;
 pub use client::{HttpClient, retry_transient};
+pub use config::{AnyStt, AnyTts, ChatEndpoint, Config, Protocol};
 pub use edge_tts::EdgeTts;
 pub use elevenlabs::ElevenLabsTts;
 pub use minimax::MiniMaxTts;

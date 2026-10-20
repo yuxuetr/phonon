@@ -20,7 +20,7 @@ Phonon 的 TTS(语音合成)、STT(语音识别)、LLM(播客脚本生成)都可
 |---|---|---|---|---|
 | `minimax` | `MINIMAX_API_KEY` | speech-2.8-hd | asr-1.0(带时间戳) | MiniMax-M3.1-Flash |
 | `qwen` | `DASHSCOPE_API_KEY` | qwen3-tts-flash | qwen-audio-3.0-asr-flash(带时间戳) | qwen3.8-flash |
-| `glm` | `ZHIPU_API_KEY` | glm-tts | glm-asr-2512(带时间戳，单次 ≤30 s,自动切分) | glm-4.7 |
+| `glm` | `ZHIPU_API_KEY` | glm-tts | glm-asr(带时间戳，单次 ≤30 s,自动切分) | glm-4.7 |
 | `stepfun` | `STEP_API_KEY` | step-tts-2 | stepaudio-2.5-asr(**无时间戳**) | step-3.7-flash |
 | `deepseek` | `DEEPSEEK_API_KEY` | — | — | deepseek-flash |
 | `openai` | `OPENAI_API_KEY` | tts-1 | whisper-1(带时间戳) | gpt-4o-mini |
@@ -84,7 +84,9 @@ CLI 的 `--provider` 只有 edge / openai,server 写死 Edge。国内厂商除 M
 - **差异点**(都要处理，否则请求失败):
   - GLM TTS 不支持 mp3 → OpenAI 协议的输出格式改为可配，默认 wav。
   - StepFun STT 拒绝 `verbose_json`,也不返回时间戳;GLM STT 不需 `verbose_json` 就返回 segments。
-  - GLM STT 单次 ≤30 s(超过返回 400 code 1214)→ 按时长切分。
+  - GLM STT 单次 ≤30 s(超过返回 400 code 1214)→ 按时长切分;只有 `glm-asr` 返回 segments,
+    `glm-asr-2512` 只返回文本。
+  - MiniMax STT 请求体与 OpenAI 相同，但路径是 `/speech_to_text` → 路径可配。
   - TTS 单次长度上限:Qwen 600 字、GLM 1024、StepFun 1000 → 按句切分。
   - 当前 LLM 默认开启思考：小 `max_tokens` 下 content 为空;MiniMax-M2 把 `<think>` 放进 content
     → 预置里带关闭思考的参数，解析前剥掉 `<think>…</think>` 和代码围栏。

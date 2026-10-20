@@ -99,6 +99,14 @@ impl ElevenLabsTts {
     })
   }
 
+  /// Uses a caller-configured client (base URL is the `.../v1` root).
+  pub fn with_client(client: HttpClient, model_id: impl Into<String>) -> Self {
+    Self {
+      client,
+      model_id: model_id.into(),
+    }
+  }
+
   /// Sets the model ID (e.g. "eleven_monolingual_v1", "eleven_multilingual_v2").
   pub fn with_model(mut self, model_id: impl Into<String>) -> Self {
     self.model_id = model_id.into();
