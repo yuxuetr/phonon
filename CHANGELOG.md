@@ -3,6 +3,44 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 ---
+## v0.7.1 (unreleased) — evaluation fixes
+
+Hand-written summary of the fixes from [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md);
+see `git log` for individual commits.
+
+### Breaking changes
+
+- **phonon-mcp**: `ToolRegistry::new(fs_root)` / `Server::new(fs_root)` take a sandbox root;
+  `McpError` gains `PathDenied` and loses `From<AiError>` / `From<PodcastError>`.
+- **phonon-podcast**: `build_episode_metadata(script, spans)` and
+  `assign_chapter_times(script, spans)` take per-segment `(start, end)` times.
+- **phonon-engine**: `AudioEffect`, `add_effect`, `PluginAdapter`, `EffectAsPlugin` and the
+  `*Effect` wrappers are removed; `EffectChain` holds `Box<dyn DspPlugin>` (`add_plugin`).
+- **phonon-io**: AAC encoding (`write_aac`, `AacConfig`, `.aac` in `write_audio`) requires
+  the `aac` feature.
+- **phonon-plugin** crate removed (scaffold without FFI).
+
+### Security
+
+- **phonon-server**: rejects file-path assets in posted scripts, bounds all size/duration
+  parameters, binds `127.0.0.1` by default, drops permissive CORS, explicit 32 MB body limit.
+- **phonon-mcp**: `audio_load` / `audio_save` confined to `PHONON_MCP_ROOT`; no silent overwrite.
+- **phonon-ai**: API keys are redacted from `Debug` output.
+
+### Bug fixes
+
+- Resampler: full anti-aliasing kernel support when downsampling (48k→16k leakage at 10 kHz
+  -26 dB → -64 dB).
+- SIMD helpers processed only the last 0–3 samples on non-x86_64/aarch64 targets.
+- Compressor: channel-linked, attack/release correct for multichannel audio.
+- Podcast: empty BGM no longer hangs; chapters/SRT account for intro and crossfade.
+- Whisper: `TranscribeOptions::default()` requests timestamps.
+- Engine: audio callback never blocks on control locks; `seek` is frame-aligned.
+- Zero-channel buffers return errors instead of panicking; `read_audio` keeps the declared
+  format for header-only files.
+- CI: clippy `-D warnings` passes on stable 1.99; doctests and AAC feature are tested.
+
+---
 ## [unreleased]
 
 ### Bug Fixes

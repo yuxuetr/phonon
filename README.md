@@ -10,9 +10,9 @@ Phonon is organized as a Rust workspace with the following crates:
 |---|---|
 | `phonon-core` | Core audio buffer, DSP algorithms (mix, resample, normalize, FFT, compressor, etc.) |
 | `phonon-wav` | WAV file reading and writing (16-bit PCM) |
-| `phonon-io` | Multi-format audio I/O — read any format via Symphonia, write WAV/MP3/FLAC/OGG/AAC with streaming encoders |
-| `phonon-engine` | Real-time audio playback with pause/resume/seek/volume, streaming support, and effects chain |
-| `phonon-ai` | AI integrations — TTS (OpenAI, Edge, ElevenLabs), STT (Whisper), sound generation |
+| `phonon-io` | Multi-format audio I/O — read any format via Symphonia, write WAV/MP3/FLAC/OGG (and AAC behind the `aac` feature) |
+| `phonon-engine` | Real-time audio playback with pause/resume/seek/volume, streaming support, and a `DspPlugin` effect chain |
+| `phonon-ai` | AI integrations — TTS (OpenAI, Edge, ElevenLabs, MiniMax), STT (Whisper), sound generation |
 | `phonon-podcast` | Podcast generation pipeline — script → TTS → assembly with chapters & subtitles |
 | `phonon-video` | Video audio track extraction/replacement via ffmpeg |
 | `phonon-server` | REST API server (axum) exposing TTS and podcast generation |
@@ -20,6 +20,7 @@ Phonon is organized as a Rust workspace with the following crates:
 | `phonon-wasm` | WebAssembly bindings — run phonon-core in the browser via wasm-bindgen |
 | `phonon-studio` | Desktop GUI application (Dioxus 0.7) with spectrum visualization, EQ panel, drag & drop |
 | `phonon-cli` | Command-line interface |
+| `phonon-tests` | Cross-crate integration tests (not published) |
 
 ## Quick Start
 
@@ -60,7 +61,7 @@ For copy-pasteable recipes (CLI / Rust / REST / MCP / Wasm), see the
 - SIMD optimization (NEON / SSE) for hot kernels (optional via `simd` feature)
 
 ### AI Integration (phonon-ai)
-- **TTS**: OpenAI, Microsoft Edge TTS, ElevenLabs
+- **TTS**: OpenAI, Microsoft Edge TTS, ElevenLabs, MiniMax (T2A v2)
 - **STT**: OpenAI Whisper (with timed segments)
 - **Sound Generation**: Generic HTTP provider + Replicate-flavored async polling
 - Streaming TTS (PCM chunked HTTP for OpenAI / ElevenLabs)
@@ -92,13 +93,20 @@ For copy-pasteable recipes (CLI / Rust / REST / MCP / Wasm), see the
 - `POST /api/tts` — Text-to-speech synthesis
 - `POST /api/podcast/generate` — Full podcast generation
 - `POST /api/podcast/preview` — Single segment preview
+- `POST /api/podcast/episode` — Script → tagged MP3 + chapters + SRT (JSON)
+- `POST /api/lufs` — Loudness report for an uploaded audio file
+
+The server has no authentication and binds `127.0.0.1:3000` by default
+(override with `PHONON_BIND`). Scripts may not reference server-side files
+(`bgm_audio` / `AssetSource::File`); sizes and durations are bounded.
 
 ### MCP Server (phonon-mcp)
 JSON-RPC 2.0 over stdio — drives Phonon from Claude Desktop, Cursor, or any
 MCP-aware LLM agent. 14 built-in tools covering load/save/info, mix/trim/fade,
 normalize (peak + LUFS), volume_db, pan, resample, and full BS.1770 loudness
 measurement. Audio buffers cross the JSON boundary as UUID handles into an
-in-memory asset registry — no PCM data on the wire.
+in-memory asset registry — no PCM data on the wire. `audio_load` /
+`audio_save` are confined to `PHONON_MCP_ROOT` (default: the launch directory).
 
 ```bash
 cargo run -p phonon-mcp --bin phonon-mcp
@@ -109,17 +117,23 @@ Crate-level install + Claude Desktop config: [`phonon-mcp/README.md`](./phonon-m
 Full per-tool input/output schema: [`docs/mcp-tools.md`](./docs/mcp-tools.md).
 
 ### WebAssembly (phonon-wasm)
-- All phonon-core algorithms available in the browser
-- `process_audio()` — chain operations via JSON config
-- Individual functions: normalize, reverse, fade, volume, speed, spectrum, EQ
+- `process_audio()` — chain operations via JSON config: normalize, reverse,
+  fade in/out, volume (linear / dB), speed, trim, silence, EQ
+- Individual functions: normalize, reverse, fade in/out, volume, speed,
+  spectrum, plus rms / peak / dBFS / duration measurements
 - Demo page with drag & drop, waveform/spectrum visualization, Web Audio playback
-- Build: `wasm-pack build -p phonon-wasm --target web`
+- Build: `./phonon-wasm/build.sh` (wraps `wasm-pack`)
 
 ## Requirements
 
 - Rust 1.85+ (2024 edition)
+- A C/C++ toolchain with `make` / autotools (LAME, Vorbis, and fdk-aac are built from source)
+- Linux: `libasound2-dev` and `pkg-config` (cpal, for phonon-engine / studio)
 - ffmpeg (optional, for phonon-video)
-- API keys (optional): `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`
+- API keys (optional): `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `MINIMAX_API_KEY`, `REPLICATE_API_TOKEN`
+
+MP3 encoding statically links LAME (**LGPL-3.0**); AAC encoding is opt-in
+because libfdk-aac's license is not OSI-approved. See [`phonon-io/README.md`](./phonon-io/README.md).
 
 ## License
 

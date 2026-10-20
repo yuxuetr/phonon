@@ -16,7 +16,7 @@
 
 数据源项目通过 MCP 协议消费 phonon 的能力,本项目专注于"声音"。
 
-## 已交付能力(v0.1 → v0.6)
+## 已交付能力(v0.1 → v0.7)
 
 - **v0.1**: WAV 读写 + AudioBuffer
 - **v0.2**: pydub 等价(overlay/reverse/repeat/dBFS)+ MP3 输出 + Edge TTS + 并发合成
@@ -24,6 +24,8 @@
 - **v0.4**: STT (Whisper) + SRT + 章节 + 视频音轨 + Server + benchmarks
 - **v0.5**: Lanczos sinc + FLAC/OGG/AAC + EffectChain + CI
 - **v0.6**: 多频段 EQ + rayon 并行 + Studio UI + Wasm + Plugin 架构
+- **v0.7**: LUFS + ID3/Vorbis 标签与章节 + Pan + TTS 缓存 + AI 资产接管线 + Episode 导出 + MCP server
+- **v0.7.1**: 评估修复(安全 / 结果正确性 / 实时安全 / 抽象收敛),见 [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md)
 
 ## v0.7 计划 — AI 播客生产就绪 + MCP 暴露
 
@@ -52,7 +54,7 @@
 
 ### Phase C — MCP 暴露层
 
-**新增 `phonon-mcp` crate**,使用官方 `rmcp` SDK,stdio 传输。
+**新增 `phonon-mcp` crate**,手写 JSON-RPC 2.0(未用 `rmcp`,避免其复杂度),stdio 传输。
 
 #### Asset Registry
 - `AudioHandle = Uuid`
@@ -64,12 +66,13 @@
 | 类别 | Tools |
 |---|---|
 | **基础** | `audio_load`, `audio_save`, `audio_info`, `audio_list`, `audio_drop` |
-| **DSP** | `audio_mix`, `audio_trim`, `audio_fade`, `audio_normalize`, `audio_normalize_lufs`, `audio_eq`, `audio_compress`, `audio_volume_db`, `audio_pan`, `audio_resample` |
+| **DSP** | `audio_mix`, `audio_trim`, `audio_fade`, `audio_normalize`, `audio_normalize_lufs`, `audio_volume_db`, `audio_pan`, `audio_resample`(`audio_eq` / `audio_compress` 未实现) |
 | **测量** | `audio_loudness`(返回 LUFS / peak / RMS / dBTP) |
 | **AI** | `tts_synthesize`, `tts_list_voices`, `sound_generate` |
 | **管线** | `podcast_generate`(脚本→episode 句柄)/ `podcast_export`(句柄→tagged mp3) |
 
-每个 tool 通过 `schemars` 自动派生 JSON Schema,LLM 可零配置发现并调用。
+每个 tool 的 JSON Schema 手写在注册处(未使用 `schemars`),LLM 可零配置发现并调用。
+`audio_load` / `audio_save` 限定在 `PHONON_MCP_ROOT` 目录内。
 
 ## 不在本项目范围(数据源项目处理)
 
@@ -80,11 +83,13 @@
 
 ## 后续(v0.8+ 远期)
 
-- 流式 TTS(边合成边播)
-- AudioEffect / DspPlugin 架构统一
-- wasm-pack 在线 demo
-- 发布 crates.io
-- VST3 / CLAP 兼容层(如有需要)
+已完成:流式 TTS、EffectChain 统一到 `DspPlugin`(v0.7.1 删除了 `AudioEffect`)、wasm-pack demo。
+
+- 发布 crates.io(先补 CHANGELOG 与 v0.6 / v0.7 tag)
+- async 上下文中的阻塞工作改走 `spawn_blocking`;TTS provider 超时 / 重试
+- 引擎剩余实时安全问题(`append_samples` 锁内扩容、`ParametricEqPlugin` 回调内重建)
+- VST3 / CLAP 兼容层 —— v0.7.1 删除了无 FFI 的 `phonon-plugin` 骨架;
+  **重估条件**:出现需要加载 Phonon 插件的真实宿主
 
 ## 执行节奏
 
@@ -95,4 +100,4 @@
 
 ---
 
-**最后更新**: 2026-04-26
+**最后更新**: 2026-10-20

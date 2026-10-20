@@ -6,7 +6,7 @@
 
 **注意**: 本项目严格遵循 [CONSTITUTION.md](./CONSTITUTION.md) 中的规定。在编写任何代码前，必须查阅该文件。
 关键要求包括：
-- **严禁使用 `unwrap()` / `except()`**
+- **严禁使用 `unwrap()` / `expect()`**
 - **必须使用 Result 错误处理**
 - **保持高内聚低耦合架构**
 
@@ -21,7 +21,7 @@
 虽然 Phase 1 (v0.1) 仅关注 **WAV** 格式，但这只是为了快速启动和验证核心算法。
 **Phonon 的最终目标是格式无关 (Format Agnostic)**。
 - 内部表示 (IR)：统一使用 `Vec<f32>` (PCM)
-- 输入支持：未来将支持 MP3, AAC, FLAC, OGG 等 (计划通过 `symphonia` 集成)
+- 输入支持：WAV / MP3 / AAC / FLAC / OGG 等,经 `symphonia` 解码
 - 输出支持：支持编码为多种常见格式
 
 ## 核心原则
@@ -67,25 +67,29 @@ pub type Result<T> = std::result::Result<T, PhononError>;
 
 ```
 phonon/
-├── Cargo.toml              # Workspace 根配置 (12 crates)
-├── DESIGN.md               # 架构设计文档
+├── Cargo.toml              # Workspace 根配置 (13 crates)
+├── CONSTITUTION.md         # 项目宪法(最高约束)
 ├── AGENTS.md               # 本文档
 ├── README.md               # 项目说明
+├── RoadMap.md              # 定位、边界与路线
 ├── Todos.md                # 开发计划跟踪
+├── CHANGELOG.md
+├── docs/                   # usage / mcp-tools / publishing / 评估报告
 │
 ├── phonon-core/            # 音频算法核心 (AudioBuffer, DSP, EQ, Plugin)
 │   └── src/
 │       ├── lib.rs          # 公开 API + AudioBuffer
 │       ├── plugin.rs       # DspPlugin trait + PluginRegistry + 5 内建插件
-│       └── algorithms/     # 20+ 算法模块 (mix, trim, eq, compressor, fft, ...)
+│       └── algorithms/     # 23 个算法模块 (mix, trim, eq, compressor, lufs, simd_ops, ...)
 │
 ├── phonon-wav/             # WAV 文件读写
-├── phonon-io/              # 多格式 I/O (WAV/MP3/FLAC/OGG/AAC)
-├── phonon-engine/          # 实时播放引擎 (AudioEffect + EffectChain)
+├── phonon-io/              # 多格式 I/O (WAV/MP3/FLAC/OGG;AAC 需 `aac` feature)
+├── phonon-engine/          # 实时播放引擎 (EffectChain = Vec<Box<dyn DspPlugin>>)
 ├── phonon-ai/              # AI 集成 (TTS/STT/SoundGen)
 ├── phonon-podcast/         # 播客生成管线 (脚本→TTS→拼装+字幕+章节)
 ├── phonon-video/           # 视频音轨提取/替换 (ffmpeg)
-├── phonon-server/          # REST API 服务 (axum)
+├── phonon-server/          # REST API 服务 (axum,默认仅监听 127.0.0.1)
+├── phonon-mcp/             # MCP server (JSON-RPC stdio,文件访问限定在 PHONON_MCP_ROOT)
 ├── phonon-wasm/            # WebAssembly 绑定 (wasm-bindgen + demo)
 ├── phonon-studio/          # 桌面 GUI (Dioxus 0.7)
 │   └── src/
@@ -100,12 +104,12 @@ phonon/
 
 **已完成**: v0.1 (WAV) → v0.2 (pydub等价) → v0.3 (播客Agent) → v0.4 (STT/字幕/视频/Server) → v0.5 (sinc resampler/多格式/EffectChain/CI) → v0.6 (EQ/rayon/Studio UI/Wasm/Plugin) → **v0.7 (LUFS/MP3+FLAC+OGG tags/Pan/TTS cache/AI BGM 接管线/Episode export/MCP server)**
 
-**当前版本**: v0.7
+**当前版本**: v0.7.1(评估修复,见 [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md))
 
 **phonon-core 特性**:
-- `features = ["parallel", "simd"]`(默认开启)— rayon 并行 + NEON/SSE SIMD
-- 22+ 算法模块,新增 `lufs`(BS.1770-4)和 `pan`
-- 191 单元测试 + 8 doc tests + 12 集成测试
+- `features = ["parallel", "simd"]`(默认开启)— rayon 并行 + NEON/SSE SIMD,其他架构走标量
+- 23 个算法模块,含 `lufs`(BS.1770-4)和 `pan`
+- 测试数以 `cargo test --workspace` 实际输出为准(不在文档里维护数字)
 
 **phonon-wasm**:
 - `phonon-core` 的 wasm-bindgen 封装(无 rayon / 无 simd)
@@ -116,11 +120,10 @@ phonon/
 - 14 个内建 tool:基础 / DSP / 测量类
 - AssetRegistry 用 UUID 句柄管理音频缓冲,LLM 永不接触 PCM 字节
 
-**下一步待做**(详见 RoadMap.md):
-- 流式 TTS(边合成边播)
-- AudioEffect / DspPlugin 架构统一
-- wasm-pack 构建验证
-- 发布到 crates.io
+**下一步待做**(详见 RoadMap.md / Todos.md):
+- 发布到 crates.io(先补 CHANGELOG 与 tag)
+- async 上下文中的阻塞 DSP/编码改走 `spawn_blocking`;TTS provider 超时与重试
+- 引擎剩余实时安全问题(`append_samples` 锁内扩容、`ParametricEqPlugin` 回调内重建)
 - AI / 管线工具下沉到下游 data-source 项目(provider 配置在调用方)
 
 ## 开发工作流
@@ -174,7 +177,7 @@ mod tests {
 ```
 
 ### 构建配置
-在项目根目录创建 `.cargo/config.toml`：
+本地可创建 `.cargo/config.toml`(已 gitignore,不要提交——CI runner 上不存在这个路径)：
 ```toml
 [build]
 target-dir = "/Users/hal/.target"
@@ -354,13 +357,13 @@ pub fn fade_out(buffer: &mut AudioBuffer, duration_secs: f64) {
 A: `f32` 提供更高的处理精度，避免整数运算的溢出问题，且现代处理器的浮点运算性能优秀。最终输出时再转换为 `i16`。
 
 ### Q: 如何处理不同采样率的音频？
-A: 在 Phase 2 会实现 `resample()` 函数，使用插值算法转换采样率。简单场景可用线性插值，专业场景需要使用 sinc 插值。
+A: `phonon_core::resample()` 使用 Lanczos 窗 sinc 插值(降采样时按比例展宽核以抗混叠);`resample_linear()` 是快速低质量版本。
 
 ### Q: 音频处理是否需要多线程？
 A: 
 - **算法层** (phonon-core): 使用 `rayon` 进行数据并行
 - **播放层** (phonon-engine): 需要独立音频线程
-- **GUI 层** (phonon-studio): UI 线程与处理线程分离
+- **GUI 层** (phonon-studio): 文件加载走 `spawn_blocking`;EQ / 效果 / 重采样目前仍在 UI 线程同步执行(待改)
 
 ### Q: 如何避免音频爆音 (Clipping)？
 A: 
@@ -404,10 +407,8 @@ export RUST_BACKTRACE=1  # 开发时启用堆栈跟踪
 ## 版本发布流程
 
 ### 版本号规范 (Semantic Versioning)
-- **0.1.x**: Phase 1 (WAV 读写)
-- **0.2.x**: Phase 2 (算法核心)
-- **0.3.x**: Phase 3 (播放引擎)
-- **0.4.x**: Phase 4 (GUI 应用)
+- 0.x 期间每个次版本对应一个里程碑(历史见 Todos.md / CHANGELOG.md),
+  次版本内允许破坏性改动,需在 commit 中标注 `BREAKING`
 - **1.0.0**: 第一个稳定版本
 
 ### 发布前检查清单
@@ -437,7 +438,7 @@ export RUST_BACKTRACE=1  # 开发时启用堆栈跟踪
 ---
 
 **文档版本**: v1.0  
-**最后更新**: 2026-01-12  
+**最后更新**: 2026-10-20  
 **维护者**: hal  
 
 **注意**: 本文档会随着项目进展持续更新，Agent 在协作时应优先参考本文档的最新版本。

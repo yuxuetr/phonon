@@ -43,7 +43,7 @@
 - [x] Wasm 支持 (phonon-wasm: wasm-bindgen bindings + demo HTML, phonon-core parallel feature gate)
 - [x] 插件架构 (phonon-core: DspPlugin trait, PluginParam, PluginRegistry, 5 内建插件)
 
-## v0.7 — AI 播客生产就绪 + MCP 暴露 (进行中)
+## v0.7 — AI 播客生产就绪 + MCP 暴露 ✅ 已完成
 
 > 详细规划见 [RoadMap.md](./RoadMap.md)
 
