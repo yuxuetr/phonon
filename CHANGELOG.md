@@ -3,8 +3,37 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 ---
-## v0.7.4 (unreleased)
+## v0.8.0 (unreleased) — configurable model providers
 
+Items J1–J10 in [Todos.md](./Todos.md); usage and design record in
+[docs/providers.md](./docs/providers.md).
+
+### Added
+
+- **Provider config** (`phonon_ai::Config`): `phonon.toml` / `$PHONON_CONFIG` /
+  `~/.config/phonon/config.toml` picks TTS, STT and LLM providers. Presets for MiniMax, Qwen,
+  GLM, StepFun, DeepSeek, OpenAI, ElevenLabs and Edge; without a config the first preset whose
+  API key is set wins (TTS falls back to keyless Edge). `[providers.*]` adds any
+  OpenAI-compatible self-hosted server (vLLM, Ollama, Kokoro-FastAPI, speaches, ...).
+- Qwen TTS / STT over the DashScope native API (`QwenTts`, `QwenStt`).
+- OpenAI-protocol knobs the vendors need: `OpenAiTts::with_format`, `WhisperStt::with_path` /
+  `with_segment_mode`, `OpenAiScriptGenerator::with_extra_body` (and `<think>` stripping).
+- Long input is split per provider limit: TTS text at sentence ends (`split_text`), STT audio at
+  quiet points with shifted timestamps. Qwen TTS uses 200 characters per request: near its
+  600 limit the same text came back 1.2x–5x too long.
+- `phonon_wav::encode_wav` for in-memory WAV bytes.
+- CLI: `--config`, `--provider` / `--model` on tts / stt / subtitle / podcast / episode-export,
+  and `phonon providers` to show what resolves.
+
+### Changed
+
+- **BREAKING** CLI `tts` no longer defaults to OpenAI `alloy`, and `episode-export` no longer
+  defaults to Edge; both follow the config. Pass `--provider edge` for the old export.
+- **BREAKING** phonon-server takes its TTS provider from the config at startup; `/api/tts`
+  `voice` defaults to the provider's voice (was `en-US-AriaNeural`).
+- `phonon subtitle` fails when the provider returns no timestamps instead of writing an empty SRT.
+- Podcast segments are leveled to one loudness instead of one peak; voices previously differed
+  by up to 6 dB.
 - reqwest 0.12 → 0.13, so the workspace no longer compiles two HTTP stacks (msedge-tts already used 0.13).
   TLS is now rustls; native-tls / hyper-tls are gone from the tree.
 
