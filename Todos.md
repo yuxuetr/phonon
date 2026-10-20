@@ -108,7 +108,7 @@
 - [x] **F10** 引擎:回调不阻塞(try_lock)、控制线程不在锁内分配/释放、`seek` 帧对齐 ✅ (遗留:append_samples 锁内扩容、ParametricEqPlugin 回调内重建)
 
 ### P2 — 质量与架构
-- [ ] **F11** `HttpClient` 等 Debug 输出隐藏 API key
+- [x] **F11** `HttpClient` 等 Debug 输出隐藏 API key ✅
 - [ ] **F12** 删除未使用依赖(mcp → ai/podcast/schemars,studio → ai/podcast)
 - [ ] **F13** 效果抽象收敛:删 phonon-plugin、deprecated 包装、`EffectAsPlugin`
 - [ ] **F14** phonon-io 编码器 feature 开关(aac 默认关)+ docs.rs 元数据
