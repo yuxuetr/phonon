@@ -308,15 +308,6 @@ fn finite(v: f32) -> Option<f32> {
 
 /// Write `bytes` to a temp file with the given extension and decode via
 /// `phonon_io::read_audio`. Returns the decoded buffer.
-fn decode_audio_bytes(bytes: &[u8], ext: &str) -> std::result::Result<AudioBuffer, String> {
-  let tmp = tempfile::Builder::new()
-    .suffix(&format!(".{}", ext))
-    .tempfile()
-    .map_err(|e| e.to_string())?;
-  std::fs::write(tmp.path(), bytes).map_err(|e| e.to_string())?;
-  phonon_io::read_audio(tmp.path()).map_err(|e| e.to_string())
-}
-
 async fn lufs_handler(headers: HeaderMap, body: Bytes) -> impl IntoResponse {
   let ct = headers
     .get(header::CONTENT_TYPE)
@@ -349,22 +340,26 @@ async fn lufs_handler(headers: HeaderMap, body: Bytes) -> impl IntoResponse {
 
   // The outer error is a failed worker task, the inner one a decode error.
   let measured = blocking(move || {
-    Ok(decode_audio_bytes(&audio, &ext).map(|buf| {
-      let report = phonon_core::measure_loudness(&buf);
-      LufsResponse {
-        duration_secs: buf.duration_secs(),
-        sample_rate: buf.sample_rate,
-        channels: buf.channels,
-        integrated_lufs: finite(report.integrated_lufs),
-        short_term_max_lufs: finite(report.short_term_max_lufs),
-        momentary_max_lufs: finite(report.momentary_max_lufs),
-        range_lu: report.range_lu,
-        true_peak_dbtp: finite(report.true_peak_dbtp),
-        peak: phonon_core::peak(&buf),
-        rms: phonon_core::rms(&buf),
-        dbfs: finite(phonon_core::dbfs(&buf)),
-      }
-    }))
+    Ok(
+      phonon_io::decode_audio(&audio, &ext)
+        .map_err(|e| e.to_string())
+        .map(|buf| {
+          let report = phonon_core::measure_loudness(&buf);
+          LufsResponse {
+            duration_secs: buf.duration_secs(),
+            sample_rate: buf.sample_rate,
+            channels: buf.channels,
+            integrated_lufs: finite(report.integrated_lufs),
+            short_term_max_lufs: finite(report.short_term_max_lufs),
+            momentary_max_lufs: finite(report.momentary_max_lufs),
+            range_lu: report.range_lu,
+            true_peak_dbtp: finite(report.true_peak_dbtp),
+            peak: phonon_core::peak(&buf),
+            rms: phonon_core::rms(&buf),
+            dbfs: finite(phonon_core::dbfs(&buf)),
+          }
+        }),
+    )
   })
   .await;
 

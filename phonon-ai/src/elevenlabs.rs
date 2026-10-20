@@ -28,7 +28,6 @@ use crate::voice::VoiceConfig;
 use futures::StreamExt;
 use phonon_core::AudioBuffer;
 use serde::Serialize;
-use std::io::Cursor;
 use tracing::{info, instrument};
 
 const ELEVENLABS_BASE_URL: &str = "https://api.elevenlabs.io/v1";
@@ -104,24 +103,6 @@ impl ElevenLabsTts {
   pub fn with_model(mut self, model_id: impl Into<String>) -> Self {
     self.model_id = model_id.into();
     self
-  }
-
-  /// Decodes audio bytes into an AudioBuffer via phonon-io.
-  fn decode_audio_bytes(data: &[u8]) -> Result<AudioBuffer, AiError> {
-    let tmp = tempfile::Builder::new()
-      .suffix(".mp3")
-      .tempfile()
-      .map_err(|e| AiError::Io(e.to_string()))?;
-
-    std::io::copy(
-      &mut Cursor::new(data),
-      &mut std::fs::File::create(tmp.path()).map_err(|e| AiError::Io(e.to_string()))?,
-    )
-    .map_err(|e| AiError::Io(e.to_string()))?;
-
-    let buffer = phonon_io::read_audio(tmp.path()).map_err(|e| AiError::Decode(e.to_string()))?;
-
-    Ok(buffer)
   }
 
   /// Derive voice settings from VoiceConfig's style/emotion fields.
@@ -258,7 +239,7 @@ impl crate::tts::TtsProvider for ElevenLabsTts {
       "Received ElevenLabs audio response"
     );
 
-    let buffer = Self::decode_audio_bytes(&audio_bytes)?;
+    let buffer = crate::tts::decode(&audio_bytes, "mp3")?;
 
     info!(
       duration = buffer.duration_secs(),

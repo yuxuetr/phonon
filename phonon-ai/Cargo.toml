@@ -21,7 +21,6 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true
-tempfile.workspace = true
 msedge-tts.workspace = true
 futures.workspace = true
 phonon-wav.workspace = true
@@ -30,4 +29,5 @@ dirs.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 http = "1"

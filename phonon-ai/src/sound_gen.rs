@@ -30,7 +30,6 @@ use crate::client::{ApiKey, CONNECT_TIMEOUT, RETRY_BASE_DELAY, env_key, retry_tr
 use phonon_core::AudioBuffer;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
-use std::io::Cursor;
 use std::time::Duration;
 use tracing::{info, instrument};
 
@@ -178,23 +177,6 @@ impl HttpSoundGen {
     self.response_format = fmt.into();
     self
   }
-
-  /// Decode audio bytes using phonon-io via a temp file.
-  fn decode_audio_bytes(data: &[u8], suffix: &str) -> Result<AudioBuffer, AiError> {
-    let ext = format!(".{suffix}");
-    let tmp = tempfile::Builder::new()
-      .suffix(&ext)
-      .tempfile()
-      .map_err(|e| AiError::Io(e.to_string()))?;
-
-    std::io::copy(
-      &mut Cursor::new(data),
-      &mut std::fs::File::create(tmp.path()).map_err(|e| AiError::Io(e.to_string()))?,
-    )
-    .map_err(|e| AiError::Io(e.to_string()))?;
-
-    phonon_io::read_audio(tmp.path()).map_err(|e| AiError::Decode(e.to_string()))
-  }
 }
 
 impl SoundGenProvider for HttpSoundGen {
@@ -234,7 +216,7 @@ impl SoundGenProvider for HttpSoundGen {
       "Received audio from generation API"
     );
 
-    let buffer = Self::decode_audio_bytes(&audio_bytes, &self.response_format)?;
+    let buffer = crate::tts::decode(&audio_bytes, &self.response_format)?;
 
     info!(
       duration = buffer.duration_secs(),
@@ -506,7 +488,7 @@ impl SoundGenProvider for ReplicateSoundGen {
       })
       .unwrap_or_else(|| "wav".to_string());
 
-    let buffer = HttpSoundGen::decode_audio_bytes(&audio_bytes, &suffix)?;
+    let buffer = crate::tts::decode(&audio_bytes, &suffix)?;
 
     info!(
       duration = buffer.duration_secs(),

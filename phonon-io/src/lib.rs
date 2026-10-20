@@ -1,6 +1,7 @@
 use phonon_core::{AudioBuffer, PhononError, Result};
 use std::ffi::OsStr;
 use std::fs::File;
+use std::io::Cursor;
 use std::path::Path;
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
@@ -46,9 +47,6 @@ pub fn read_audio<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
   let path = path.as_ref();
   let src = File::open(path).map_err(PhononError::Io)?;
 
-  // Create the media source stream.
-  let mss = MediaSourceStream::new(Box::new(src), Default::default());
-
   // Create a probe hint using the file's extension. [Optional]
   let mut hint = Hint::new();
   if let Some(extension) = path.extension() {
@@ -57,13 +55,40 @@ pub fn read_audio<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
     }
   }
 
+  decode(
+    MediaSourceStream::new(Box::new(src), Default::default()),
+    &hint,
+  )
+}
+
+/// Decodes an encoded audio file held in memory, such as an HTTP response
+/// body. `extension` (`"mp3"`, `"wav"`, ...) is a hint for the format probe.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// let bytes = std::fs::read("song.mp3").unwrap();
+/// let buffer = phonon_io::decode_audio(&bytes, "mp3").unwrap();
+/// ```
+#[instrument(skip(bytes), fields(len = bytes.len()))]
+pub fn decode_audio(bytes: &[u8], extension: &str) -> Result<AudioBuffer> {
+  let mut hint = Hint::new();
+  hint.with_extension(extension);
+  let src = Cursor::new(bytes.to_vec());
+  decode(
+    MediaSourceStream::new(Box::new(src), Default::default()),
+    &hint,
+  )
+}
+
+fn decode(mss: MediaSourceStream, hint: &Hint) -> Result<AudioBuffer> {
   // Use the default options for metadata and format readers.
   let meta_opts: MetadataOptions = Default::default();
   let fmt_opts: FormatOptions = Default::default();
 
   // Probe the media source.
   let probed = symphonia::default::get_probe()
-    .format(&hint, mss, &fmt_opts, &meta_opts)
+    .format(hint, mss, &fmt_opts, &meta_opts)
     .map_err(|e| PhononError::Io(std::io::Error::other(e.to_string())))?;
 
   // Get the instantiated format reader.
@@ -299,6 +324,28 @@ mod tests {
       let decoded = decoded?;
       // A dropped packet or two (1152 samples each) is fine.
       assert!(decoded.samples.len() >= buffer.samples.len() - 2 * 1152);
+    }
+    Ok(())
+  }
+
+  #[test]
+  fn test_decode_audio_matches_read_audio() -> Result<()> {
+    let buffer = AudioBuffer {
+      samples: (0..8_000).map(|i| (i as f32 * 0.03).sin() * 0.5).collect(),
+      sample_rate: 16_000,
+      channels: 2,
+    };
+    for ext in ["wav", "mp3", "flac", "ogg"] {
+      let path = std::env::temp_dir().join(format!("phonon_io_decode_bytes.{ext}"));
+      write_audio(&path, &buffer)?;
+      let from_file = read_audio(&path)?;
+      let bytes = std::fs::read(&path).map_err(PhononError::Io)?;
+      let _ = std::fs::remove_file(&path);
+
+      let from_bytes = decode_audio(&bytes, ext)?;
+      assert_eq!(from_bytes.sample_rate, from_file.sample_rate, "{ext}");
+      assert_eq!(from_bytes.channels, from_file.channels, "{ext}");
+      assert_eq!(from_bytes.samples, from_file.samples, "{ext}");
     }
     Ok(())
   }

@@ -46,7 +46,6 @@ use crate::client::{HttpClient, RETRY_BASE_DELAY, env_key, retry_transient};
 use crate::voice::VoiceConfig;
 use phonon_core::AudioBuffer;
 use serde::{Deserialize, Serialize};
-use std::io::Cursor;
 use tracing::{info, instrument};
 
 const MINIMAX_BASE_URL: &str = "https://api.minimaxi.com/v1";
@@ -115,27 +114,6 @@ impl MiniMaxTts {
     })
   }
 
-  /// Decode the audio bytes returned by MiniMax into an [`AudioBuffer`]
-  /// via phonon-io / Symphonia.
-  ///
-  /// Mirrors the helper in [`crate::tts::OpenAiTts`], [`crate::edge_tts::EdgeTts`],
-  /// and [`crate::elevenlabs::ElevenLabsTts`]. Lifting these four
-  /// copies to a shared helper is tracked as a follow-up.
-  fn decode_audio_bytes(data: &[u8], suffix: &str) -> Result<AudioBuffer, AiError> {
-    let tmp = tempfile::Builder::new()
-      .suffix(suffix)
-      .tempfile()
-      .map_err(|e| AiError::Io(e.to_string()))?;
-
-    std::io::copy(
-      &mut Cursor::new(data),
-      &mut std::fs::File::create(tmp.path()).map_err(|e| AiError::Io(e.to_string()))?,
-    )
-    .map_err(|e| AiError::Io(e.to_string()))?;
-
-    phonon_io::read_audio(tmp.path()).map_err(|e| AiError::Decode(e.to_string()))
-  }
-
   /// Build the `voice_setting` block from a [`VoiceConfig`].
   ///
   /// Speed is clamped to MiniMax's documented `[0.5, 2.0]` range
@@ -153,15 +131,15 @@ impl MiniMaxTts {
     }
   }
 
-  /// Pick the matching file extension for [`decode_audio_bytes`] from the
+  /// Pick the matching format hint for [`phonon_io::decode_audio`] from the
   /// configured output format. PCM / opus / pcmu variants are returned
   /// as `None` (caller will reject — Symphonia cannot guess the rate
   /// without a container).
   fn decode_suffix(&self) -> Option<&'static str> {
     match self.format.as_str() {
-      "mp3" => Some(".mp3"),
-      "wav" => Some(".wav"),
-      "flac" => Some(".flac"),
+      "mp3" => Some("mp3"),
+      "wav" => Some("wav"),
+      "flac" => Some("flac"),
       _ => None,
     }
   }
@@ -371,7 +349,7 @@ impl crate::tts::TtsProvider for MiniMaxTts {
       "Received MiniMax T2A audio response"
     );
 
-    let buffer = Self::decode_audio_bytes(&audio_bytes, suffix)?;
+    let buffer = crate::tts::decode(&audio_bytes, suffix)?;
 
     info!(
       duration = buffer.duration_secs(),
@@ -427,11 +405,11 @@ mod tests {
   #[test]
   fn decode_suffix_recognises_known_formats() {
     let mp3 = MiniMaxTts::with_api_key("k").unwrap();
-    assert_eq!(mp3.decode_suffix(), Some(".mp3"));
+    assert_eq!(mp3.decode_suffix(), Some("mp3"));
     let wav = MiniMaxTts::with_api_key("k").unwrap().with_format("wav");
-    assert_eq!(wav.decode_suffix(), Some(".wav"));
+    assert_eq!(wav.decode_suffix(), Some("wav"));
     let flac = MiniMaxTts::with_api_key("k").unwrap().with_format("flac");
-    assert_eq!(flac.decode_suffix(), Some(".flac"));
+    assert_eq!(flac.decode_suffix(), Some("flac"));
     let pcm = MiniMaxTts::with_api_key("k").unwrap().with_format("pcm");
     assert_eq!(pcm.decode_suffix(), None);
     let opus = MiniMaxTts::with_api_key("k").unwrap().with_format("opus");

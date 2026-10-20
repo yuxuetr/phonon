@@ -5,7 +5,6 @@ use futures::StreamExt;
 use phonon_core::AudioBuffer;
 use serde::Serialize;
 use std::future::Future;
-use std::io::Cursor;
 use tracing::{info, instrument};
 
 /// Trait for Text-to-Speech providers.
@@ -92,26 +91,11 @@ impl OpenAiTts {
   pub fn with_client(client: HttpClient) -> Self {
     Self { client }
   }
+}
 
-  /// Decodes audio bytes (MP3/WAV etc.) into an AudioBuffer using Symphonia via phonon-io.
-  fn decode_audio_bytes(data: &[u8]) -> Result<AudioBuffer, AiError> {
-    // Write bytes to a temp file, then use phonon-io to decode.
-    // This is not ideal but avoids duplicating Symphonia logic.
-    let tmp = tempfile::Builder::new()
-      .suffix(".mp3")
-      .tempfile()
-      .map_err(|e| AiError::Io(e.to_string()))?;
-
-    std::io::copy(
-      &mut Cursor::new(data),
-      &mut std::fs::File::create(tmp.path()).map_err(|e| AiError::Io(e.to_string()))?,
-    )
-    .map_err(|e| AiError::Io(e.to_string()))?;
-
-    let buffer = phonon_io::read_audio(tmp.path()).map_err(|e| AiError::Decode(e.to_string()))?;
-
-    Ok(buffer)
-  }
+/// Decodes a provider's encoded audio response; `extension` hints the format.
+pub(crate) fn decode(bytes: &[u8], extension: &str) -> Result<AudioBuffer, AiError> {
+  phonon_io::decode_audio(bytes, extension).map_err(|e| AiError::Decode(e.to_string()))
 }
 
 /// PCM sample rate used by OpenAI when `response_format: "pcm"` (24 kHz 16-bit LE mono).
@@ -183,7 +167,7 @@ impl TtsProvider for OpenAiTts {
     info!(bytes = audio_bytes.len(), "Received audio response");
 
     // Decode the audio response (MP3) into an AudioBuffer
-    let buffer = Self::decode_audio_bytes(&audio_bytes)?;
+    let buffer = decode(&audio_bytes, "mp3")?;
 
     info!(
       duration = buffer.duration_secs(),

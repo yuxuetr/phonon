@@ -21,7 +21,6 @@ use crate::AiError;
 use crate::client::{RETRY_BASE_DELAY, retry_transient};
 use crate::voice::VoiceConfig;
 use phonon_core::AudioBuffer;
-use std::io::Cursor;
 use std::time::Duration;
 use tracing::{info, instrument};
 
@@ -49,24 +48,6 @@ impl EdgeTts {
   /// No configuration needed — the Edge API is free and keyless.
   pub fn new() -> Self {
     Self
-  }
-
-  /// Decodes MP3 audio bytes into an AudioBuffer.
-  fn decode_audio_bytes(data: &[u8]) -> Result<AudioBuffer, AiError> {
-    let tmp = tempfile::Builder::new()
-      .suffix(".mp3")
-      .tempfile()
-      .map_err(|e| AiError::Io(e.to_string()))?;
-
-    std::io::copy(
-      &mut Cursor::new(data),
-      &mut std::fs::File::create(tmp.path()).map_err(|e| AiError::Io(e.to_string()))?,
-    )
-    .map_err(|e| AiError::Io(e.to_string()))?;
-
-    let buffer = phonon_io::read_audio(tmp.path()).map_err(|e| AiError::Decode(e.to_string()))?;
-
-    Ok(buffer)
   }
 }
 
@@ -113,7 +94,7 @@ impl crate::tts::TtsProvider for EdgeTts {
 
     info!(bytes = audio_bytes.len(), "Received Edge TTS response");
 
-    let buffer = Self::decode_audio_bytes(&audio_bytes)?;
+    let buffer = crate::tts::decode(&audio_bytes, "mp3")?;
 
     info!(
       duration = buffer.duration_secs(),
