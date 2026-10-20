@@ -118,7 +118,9 @@
 
 > 来源同 [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md),v0.7.1 未覆盖的部分。
 
-- [ ] **G1** async 中的阻塞工作改 `spawn_blocking`(server 编码/解码/LUFS、pipeline 重采样与合并、各 provider 的 symphonia 解码、MCP DSP 工具)
+- [x] **G1** async 中的阻塞工作改 `spawn_blocking`(server 编码/解码/LUFS、pipeline 重采样与合并、各 provider 的 symphonia 解码、MCP DSP 工具)
+  - DONE: pipeline 的 TTS 后处理整体走 `render()` + `spawn_blocking`;server 的 WAV 编码、LUFS、MP3 导出走阻塞池。
+    未改:provider 的单段解码(每段几秒音频,毫秒级);MCP 请求串行处理,阻塞不影响其他请求——**重估条件**:MCP 改为并发处理请求
 - [ ] **G2** Edge TTS 连接/合成超时;MiniMax 限流与 Replicate 轮询的重试 + 退避;`HttpClient` 加 `connect_timeout`
 - [ ] **G3** 测试中 `unsafe { env::remove_var }` 改为不依赖进程环境的构造方式(并行测试竞争)
 - [ ] **G4** 引擎:`append_samples` 不在锁内扩容;`ParametricEqPlugin` 不在 `process` 内重建 / 分配
