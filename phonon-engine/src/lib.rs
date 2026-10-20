@@ -34,6 +34,10 @@ pub enum PlaybackState {
 }
 
 /// Shared state between the audio thread and the control API.
+///
+/// The audio callback only ever `try_lock`s the mutexes, so it never waits
+/// on the control thread; control methods keep their critical sections to
+/// a swap or push and do allocation/deallocation outside the lock.
 struct SharedState {
   /// Audio samples buffer (the complete track).
   samples: Mutex<Vec<f32>>,
@@ -166,14 +170,16 @@ impl AudioPlayer {
 
     info!("Loading audio for playback");
 
-    {
+    // Copy outside the lock; swap inside; free the old track after unlocking.
+    let new_samples = buffer.samples.clone();
+    let _old_samples = {
       let mut samples = self
         .state
         .samples
         .lock()
         .map_err(|e| EngineError::Play(format!("Lock poisoned: {e}")))?;
-      *samples = buffer.samples.clone();
-    }
+      std::mem::replace(&mut *samples, new_samples)
+    };
 
     self
       .state
@@ -205,11 +211,14 @@ impl AudioPlayer {
 
   /// Seeks to a position in seconds from the start.
   pub fn seek(&self, position_secs: f64) -> Result<()> {
-    let sample_idx =
-      (position_secs * self.device_sample_rate as f64 * self.device_channels as f64) as usize;
     let total = self.state.total_samples.load(Ordering::Relaxed);
-    let clamped = sample_idx.min(total);
-    self.state.position.store(clamped, Ordering::SeqCst);
+    let idx = seek_index(
+      position_secs,
+      self.device_sample_rate,
+      self.device_channels,
+      total,
+    );
+    self.state.position.store(idx, Ordering::SeqCst);
     Ok(())
   }
 
@@ -319,9 +328,12 @@ impl AudioPlayer {
   /// Clears the loaded audio buffer.
   pub fn clear(&self) {
     self.stop();
-    if let Ok(mut samples) = self.state.samples.lock() {
-      samples.clear();
-    }
+    // Take the Vec out so it is freed after the lock is released.
+    let _old_samples = self
+      .state
+      .samples
+      .lock()
+      .map(|mut s| std::mem::take(&mut *s));
     self.state.total_samples.store(0, Ordering::SeqCst);
   }
 
@@ -341,9 +353,12 @@ impl AudioPlayer {
 
   /// Removes all effects from the playback chain.
   pub fn clear_effects(&self) {
-    if let Ok(mut chain) = self.state.effect_chain.lock() {
-      chain.clear();
-    }
+    // Drop the effects after the lock is released.
+    let _old_chain = self
+      .state
+      .effect_chain
+      .lock()
+      .map(|mut chain| std::mem::take(&mut *chain));
   }
 
   /// Returns the number of active effects.
@@ -360,6 +375,15 @@ impl AudioPlayer {
   }
 }
 
+/// Interleaved sample index for `secs`, clamped to `total` and rounded down
+/// to a frame boundary (a mid-frame position would swap channels).
+fn seek_index(secs: f64, sample_rate: u32, channels: u16, total: usize) -> usize {
+  let ch = (channels as usize).max(1);
+  let idx = ((secs.max(0.0) * sample_rate as f64) as usize).saturating_mul(ch);
+  let clamped = idx.min(total);
+  clamped - clamped % ch
+}
+
 /// Audio callback: reads from shared state into the output buffer.
 fn write_data(output: &mut [f32], state: &SharedState) {
   // If not active or paused, fill with silence.
@@ -371,19 +395,16 @@ fn write_data(output: &mut [f32], state: &SharedState) {
   }
 
   let volume = state.volume();
-  let samples = match state.samples.lock() {
-    Ok(s) => s,
-    Err(_) => {
-      // Poisoned lock — fill silence
-      for frame in output.iter_mut() {
-        *frame = 0.0;
-      }
-      return;
-    }
+  // Never wait on the control thread: if it holds the lock (or it is
+  // poisoned), output silence for this block without advancing.
+  let Ok(samples) = state.samples.try_lock() else {
+    output.fill(0.0);
+    return;
   };
 
   let total = samples.len();
-  let mut pos = state.position.load(Ordering::Relaxed);
+  let start_pos = state.position.load(Ordering::Relaxed);
+  let mut pos = start_pos;
 
   for frame in output.iter_mut() {
     if pos < total {
@@ -394,17 +415,97 @@ fn write_data(output: &mut [f32], state: &SharedState) {
     }
   }
 
-  state.position.store(pos, Ordering::Relaxed);
+  drop(samples);
 
-  // Apply real-time effects
-  if let Ok(mut chain) = state.effect_chain.lock() {
-    if !chain.is_empty() {
-      chain.process(output, state.sample_rate, state.channels);
-    }
+  // Only advance if no seek/stop/play changed the position meanwhile.
+  let _ = state
+    .position
+    .compare_exchange(start_pos, pos, Ordering::AcqRel, Ordering::Relaxed);
+
+  // Apply real-time effects; skip this block if the chain is being edited.
+  if let Ok(mut chain) = state.effect_chain.try_lock()
+    && !chain.is_empty()
+  {
+    chain.process(output, state.sample_rate, state.channels);
   }
 
   // Auto-stop when finished (unless streaming — more data may arrive)
   if pos >= total && !state.streaming.load(Ordering::Relaxed) {
     state.active.store(false, Ordering::Relaxed);
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn loaded_state(samples: Vec<f32>) -> SharedState {
+    let state = SharedState::new(48_000, 2);
+    state.total_samples.store(samples.len(), Ordering::SeqCst);
+    if let Ok(mut s) = state.samples.lock() {
+      *s = samples;
+    }
+    state.active.store(true, Ordering::SeqCst);
+    state
+  }
+
+  /// Runs `f` on another thread and fails if it doesn't finish in time,
+  /// so a callback that blocks fails the test instead of hanging it.
+  fn finishes_within<F: FnOnce() + Send + 'static>(f: F) -> bool {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+      f();
+      let _ = tx.send(());
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(2)).is_ok()
+  }
+
+  #[test]
+  fn test_callback_does_not_block_on_held_sample_lock() {
+    let state = Arc::new(loaded_state(vec![0.5; 64]));
+    let guard_state = state.clone();
+    let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    // Control thread holds the sample lock until told to release it.
+    let holder = std::thread::spawn(move || {
+      let _guard = guard_state.samples.lock();
+      let _ = locked_tx.send(());
+      let _ = release_rx.recv();
+    });
+    locked_rx.recv().unwrap();
+
+    let cb_state = state.clone();
+    let done = finishes_within(move || {
+      let mut out = [1.0f32; 8];
+      write_data(&mut out, &cb_state);
+      assert!(out.iter().all(|&s| s == 0.0), "contended block is silence");
+    });
+    let _ = release_tx.send(());
+    holder.join().unwrap();
+    assert!(done, "audio callback blocked on the sample lock");
+    // Position did not advance during the skipped block.
+    assert_eq!(state.position.load(Ordering::SeqCst), 0);
+  }
+
+  #[test]
+  fn test_callback_skips_effects_when_chain_lock_held() {
+    let state = Arc::new(loaded_state(vec![0.5; 64]));
+    let _chain = state.effect_chain.lock().unwrap();
+    let cb_state = state.clone();
+    let done = finishes_within(move || {
+      let mut out = [0.0f32; 8];
+      write_data(&mut out, &cb_state);
+      assert!(out.iter().all(|&s| (s - 0.5).abs() < 1e-6));
+    });
+    assert!(done, "audio callback blocked on the effect-chain lock");
+  }
+
+  #[test]
+  fn test_seek_index_is_frame_aligned() {
+    // 48 kHz stereo: 0.5 / 48000 s lands mid-frame (sample 1).
+    assert_eq!(seek_index(0.5 / 48_000.0 + 1e-12, 48_000, 2, 1_000), 0);
+    assert_eq!(seek_index(1.5 / 48_000.0, 48_000, 2, 1_000), 2);
+    // Clamped to the end, still aligned.
+    assert_eq!(seek_index(10.0, 48_000, 2, 1_001), 1_000);
   }
 }
