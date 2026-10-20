@@ -4124,7 +4124,6 @@ dependencies = [
  "phonon-io",
  "phonon-podcast",
  "phonon-video",
- "phonon-wav",
  "serde_json",
  "tempfile",
  "tokio",

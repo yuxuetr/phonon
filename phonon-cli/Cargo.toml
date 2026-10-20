@@ -13,7 +13,6 @@ categories = ["multimedia::audio", "command-line-utilities"]
 
 [dependencies]
 phonon-core.workspace = true
-phonon-wav.workspace = true
 phonon-io.workspace = true
 phonon-engine.workspace = true
 phonon-ai.workspace = true
