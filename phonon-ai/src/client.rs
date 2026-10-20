@@ -12,6 +12,11 @@ pub(crate) const RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
 /// request timeout so an unreachable host fails fast.
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Read a provider credential from the environment variable `name`.
+pub(crate) fn env_key(name: &str) -> Result<String, AiError> {
+  std::env::var(name).map_err(|_| AiError::Config(format!("{name} environment variable not set")))
+}
+
 /// Run `op`, retrying with exponential backoff while it fails with a
 /// [transient](AiError::is_transient) error.
 ///
@@ -102,18 +107,18 @@ impl HttpClient {
   ///
   /// Reads the API key from the `OPENAI_API_KEY` environment variable.
   pub fn openai() -> Result<Self, AiError> {
-    let api_key = std::env::var("OPENAI_API_KEY")
-      .map_err(|_| AiError::Config("OPENAI_API_KEY environment variable not set".to_string()))?;
-    Self::new(api_key, "https://api.openai.com/v1", None)
+    Self::new(
+      env_key("OPENAI_API_KEY")?,
+      "https://api.openai.com/v1",
+      None,
+    )
   }
 
   /// Creates a client configured for an OpenAI-compatible API with custom base URL.
   ///
   /// Reads the API key from the `OPENAI_API_KEY` environment variable.
   pub fn openai_compatible(base_url: impl Into<String>) -> Result<Self, AiError> {
-    let api_key = std::env::var("OPENAI_API_KEY")
-      .map_err(|_| AiError::Config("OPENAI_API_KEY environment variable not set".to_string()))?;
-    Self::new(api_key, base_url, None)
+    Self::new(env_key("OPENAI_API_KEY")?, base_url, None)
   }
 
   /// Returns a reference to the inner reqwest client.
@@ -142,6 +147,15 @@ mod tests {
     let debug = format!("{client:?}");
     assert!(!debug.contains("sk-very-secret"), "{debug}");
     assert_eq!(client.api_key(), "sk-very-secret");
+  }
+
+  #[test]
+  fn test_env_key_missing_is_config_error() {
+    // A name no environment sets, so the test never mutates process state.
+    let err = env_key("PHONON_TEST_DEFINITELY_UNSET_KEY").unwrap_err();
+    assert!(
+      matches!(err, AiError::Config(ref m) if m.contains("PHONON_TEST_DEFINITELY_UNSET_KEY"))
+    );
   }
 
   /// Fails with `errors` in order, then succeeds; returns the call count.

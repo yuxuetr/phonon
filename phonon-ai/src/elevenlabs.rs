@@ -22,7 +22,7 @@
 //! ```
 
 use crate::AiError;
-use crate::client::{HttpClient, RETRY_BASE_DELAY, retry_transient};
+use crate::client::{HttpClient, RETRY_BASE_DELAY, env_key, retry_transient};
 use crate::tts::pcm_i16le_to_f32;
 use crate::voice::VoiceConfig;
 use futures::StreamExt;
@@ -76,11 +76,11 @@ impl ElevenLabsTts {
   ///
   /// Reads the API key from the `ELEVENLABS_API_KEY` environment variable.
   pub fn new() -> Result<Self, AiError> {
-    let api_key = std::env::var("ELEVENLABS_API_KEY").map_err(|_| {
-      AiError::Config("ELEVENLABS_API_KEY environment variable not set".to_string())
-    })?;
-
-    let client = HttpClient::new(api_key, ELEVENLABS_BASE_URL, Some(180))?;
+    let client = HttpClient::new(
+      env_key("ELEVENLABS_API_KEY")?,
+      ELEVENLABS_BASE_URL,
+      Some(180),
+    )?;
 
     Ok(Self {
       client,
@@ -353,15 +353,6 @@ impl crate::tts::TtsProvider for ElevenLabsTts {
 #[cfg(test)]
 mod tests {
   use super::*;
-
-  #[test]
-  fn test_elevenlabs_config_error_without_env() {
-    // Clear env to test error path
-    // SAFETY: test runs single-threaded; no other thread reads this var concurrently.
-    unsafe { std::env::remove_var("ELEVENLABS_API_KEY") };
-    let result = ElevenLabsTts::new();
-    assert!(result.is_err());
-  }
 
   #[test]
   fn test_elevenlabs_with_config() {

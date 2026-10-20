@@ -42,7 +42,7 @@
 //!   how `phonon_podcast::PodcastPipeline` already drives TTS).
 
 use crate::AiError;
-use crate::client::{HttpClient, RETRY_BASE_DELAY, retry_transient};
+use crate::client::{HttpClient, RETRY_BASE_DELAY, env_key, retry_transient};
 use crate::voice::VoiceConfig;
 use phonon_core::AudioBuffer;
 use serde::{Deserialize, Serialize};
@@ -65,9 +65,7 @@ impl MiniMaxTts {
   /// `MINIMAX_API_KEY`. Defaults to the `speech-2.8-hd` model, 32 kHz
   /// sample rate, and `mp3` output.
   pub fn new() -> Result<Self, AiError> {
-    let api_key = std::env::var("MINIMAX_API_KEY")
-      .map_err(|_| AiError::Config("MINIMAX_API_KEY environment variable not set".to_string()))?;
-    Self::with_api_key(api_key)
+    Self::with_api_key(env_key("MINIMAX_API_KEY")?)
   }
 
   /// Creates a new MiniMax TTS provider with an explicit API key.
@@ -404,18 +402,6 @@ mod tests {
       message: String::new(),
     };
     assert!(!err.is_transient());
-  }
-
-  #[test]
-  fn new_without_env_returns_config_error() {
-    // SAFETY: tests in this file are single-threaded (cargo test
-    // serialises file-scoped tests by default). No other thread reads
-    // this env var concurrently.
-    unsafe { std::env::remove_var("MINIMAX_API_KEY") };
-    let result = MiniMaxTts::new();
-    assert!(result.is_err(), "expected Config error when key missing");
-    let err = result.unwrap_err();
-    assert!(matches!(err, AiError::Config(_)), "got {err:?}");
   }
 
   #[test]

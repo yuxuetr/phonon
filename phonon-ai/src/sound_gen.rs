@@ -26,7 +26,7 @@
 //! ```
 
 use crate::AiError;
-use crate::client::{ApiKey, CONNECT_TIMEOUT, RETRY_BASE_DELAY, retry_transient};
+use crate::client::{ApiKey, CONNECT_TIMEOUT, RETRY_BASE_DELAY, env_key, retry_transient};
 use phonon_core::AudioBuffer;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -305,10 +305,7 @@ impl ReplicateSoundGen {
   /// Creates a new `ReplicateSoundGen` reading the API token from
   /// the `REPLICATE_API_TOKEN` environment variable.
   pub fn new() -> Result<Self, AiError> {
-    let api_token = std::env::var("REPLICATE_API_TOKEN").map_err(|_| {
-      AiError::Config("REPLICATE_API_TOKEN environment variable not set".to_string())
-    })?;
-    Self::with_token(api_token)
+    Self::with_token(env_key("REPLICATE_API_TOKEN")?)
   }
 
   /// Creates a new `ReplicateSoundGen` with an explicit API token.
@@ -664,13 +661,5 @@ mod tests {
     };
     let json = serde_json::to_value(&body).expect("serialize");
     assert!(json["input"].get("duration").is_none());
-  }
-
-  #[test]
-  fn test_replicate_env_missing() {
-    // SAFETY: test runs single-threaded.
-    unsafe { std::env::remove_var("REPLICATE_API_TOKEN") };
-    let result = ReplicateSoundGen::new();
-    assert!(result.is_err());
   }
 }
