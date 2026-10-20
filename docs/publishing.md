@@ -1,7 +1,24 @@
 # Publishing Phonon Crates
 
 Phonon ships a workspace of crates that are versioned and released
-together. From v0.7.0 the workspace `version` aligns with the git tag
+together.
+
+> **Status (2026-10-20): not published.** The name `phonon` on crates.io
+> belongs to an unrelated project (GitGhillie/phonon_rs), so `phonon-*`
+> crates would read as part of it. Re-evaluate when the maintainer decides
+> to publish; first settle the naming, then confirm every name is free:
+>
+> ```bash
+> for c in phonon-core phonon-wav phonon-io phonon-engine phonon-ai phonon-podcast \
+>          phonon-video phonon-mcp phonon-server phonon-cli phonon-wasm; do
+>   [ "$(curl -s -o /dev/null -w '%{http_code}' -A phonon-name-check \
+>     https://crates.io/api/v1/crates/$c)" = 404 ] || echo "taken: $c"
+> done
+> ```
+>
+> Releases are git tags + GitHub Releases only.
+
+From v0.7.0 the workspace `version` aligns with the git tag
 series so external consumers can pin a single line (e.g.
 `phonon-core = "0.7"`).
 

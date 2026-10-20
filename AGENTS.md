@@ -121,7 +121,7 @@ phonon/
 - AssetRegistry 用 UUID 句柄管理音频缓冲,LLM 永不接触 PCM 字节
 
 **下一步待做**(详见 RoadMap.md / Todos.md):
-- 发布到 crates.io(v0.7.0 / v0.7.3 已打 tag,尚未 publish)
+- crates.io 暂不发布:`phonon` 已被无关项目占用,重估条件见 docs/publishing.md;发布只走 git tag + GitHub Release
 - OGG 单页损坏时 symphonia 在打开阶段即失败(上游行为)
 - AI / 管线工具下沉到下游 data-source 项目(provider 配置在调用方)
 
