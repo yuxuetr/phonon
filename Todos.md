@@ -194,7 +194,8 @@
   - DONE: `with_extra_body` + `json_payload`(剥 `<think>` 与代码围栏);五家各生成 4 段脚本并解析成功(DeepSeek 2.2 s 最快,MiniMax 20.9 s 最慢)(280f25a)
 - [x] **J3** Qwen TTS(DashScope 原生：返回音频 URL,需二次下载)
   - DONE: `QwenTts`(生成 + 下载两次请求，均重试);`ensure_success` 移入 client.rs 共用;联网 Cherry / Ethan 通过，错误音色返回 400(4da733e)
-- [ ] **J4** Qwen STT(DashScope 原生，词级时间戳 → 按句组装 segments)
+- [x] **J4** Qwen STT(DashScope 原生，词级时间戳 → 按句组装 segments)
+  - DONE: `QwenStt`(`parameters.format` 必填，实测缺失返回 400);词级时间按句末标点组装 segments;联网两句话片段得到 2 段(0.16–5.2 s / 6.76–8.39 s)(4ff50bb)
 - [ ] **J5** 配置模块：预置 + TOML + 按 key 自动选择 + `AnyTts` / `AnyStt` / `ChatEndpoint`
   - 验收：单元测试覆盖查找顺序、自动选择顺序、自定义 provider、缺字段报错
 - [ ] **J6** TTS 超长文本按句切分(Qwen 600 / GLM 1024 / StepFun 1000 字上限)
