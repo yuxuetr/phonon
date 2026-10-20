@@ -88,3 +88,28 @@
 - [x] SIMD 优化扩展 (其他热点 DSP 路径) — 新增 `simd_sum_sq` (loudness::rms / LUFS K-weighted) 与 `simd_mul_interleaved_pair` (pan_mono_to_stereo / pan_stereo_in_place),NEON + SSE2 + 标量 fallback,9 个新 SIMD vs 标量等价性测试 ✅
 - [x] 发布到 crates.io — workspace version 0.1.0 → 0.7.0,补全各 crate description/keywords/categories/authors,新增 `scripts/publish-crates.sh` (按依赖顺序 dry-run/--execute) 与 `docs/publishing.md`,`cargo publish -p phonon-core --dry-run` 通过 ✅
 - [x] VST3 / CLAP 插件兼容层 — 新增 `phonon-plugin` crate (`publish=false`),`PluginManifest` / `ParamInfo` / `PluginExport` / `ExportedPlugin` 把任何 `DspPlugin` 转成 host-friendly 描述符,`clap`/`vst3` 模块按 feature gate 提供工厂入口骨架,README 记录 SDK 选型与后续接入步骤。10 个测试全过 ✅
+
+## v0.7.1 — 评估修复 (进行中)
+
+> 来源:[docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md)。每项一个 commit,先写能红的测试再修。
+
+### P0 — 安全与 CI
+- [ ] **F1** CI 转绿:修 clippy `-D warnings` 错误;`.cargo/config.toml` 移出版本库
+- [ ] **F2** Server 加固:默认绑定 127.0.0.1、CORS 收紧、拒绝请求体内的文件路径资源、参数上界 + `validate()`、显式 body limit、去掉 `expect`
+- [ ] **F3** MCP 路径沙箱:`PHONON_MCP_ROOT` 限定 load/save 根目录;registry 去掉 `expect`
+
+### P1 — 结果错误
+- [ ] **F4** 管线:BGM 为空死循环;章节/SRT 计入 intro 与 crossfade
+- [ ] **F5** Whisper `TranscribeOptions::default()` 默认开启 timestamps
+- [ ] **F6** 重采样降采样时核支撑按 ratio 扩展
+- [ ] **F7** SIMD 在非 x86_64/aarch64 架构的标量 fallback
+- [ ] **F8** 压缩器(compressor + CompressorPlugin)按帧计算时间常数
+- [ ] **F9** `channels == 0` 防护:相关算法返回错误;`read_audio` 无解码数据时报错
+- [ ] **F10** 引擎:回调不阻塞(try_lock)、控制线程不在锁内分配/释放、`seek` 帧对齐
+
+### P2 — 质量与架构
+- [ ] **F11** `HttpClient` 等 Debug 输出隐藏 API key
+- [ ] **F12** 删除未使用依赖(mcp → ai/podcast/schemars,studio → ai/podcast)
+- [ ] **F13** 效果抽象收敛:删 phonon-plugin、deprecated 包装、`EffectAsPlugin`
+- [ ] **F14** phonon-io 编码器 feature 开关(aac 默认关)+ docs.rs 元数据
+- [ ] **F15** 文档同步(AGENTS / README / RoadMap / CHANGELOG 0.7)
