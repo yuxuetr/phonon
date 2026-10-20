@@ -125,7 +125,8 @@
   - DONE: `retry_transient`(3 次,500ms 起指数退避)用于 OpenAI/ElevenLabs/MiniMax/Edge 合成与 Replicate 轮询;MiniMax 1002/1039 → 429;Edge 改 async client + 60s 超时;所有 reqwest client 加 10s connect timeout
 - [x] **G3** 测试中 `unsafe { env::remove_var }` 改为不依赖进程环境的构造方式(并行测试竞争)
   - DONE: 4 处构造函数统一走 `env_key()`;删除 3 个 `remove_var` 测试,改为对一个从不设置的变量名测试 `env_key`
-- [ ] **G4** 引擎:`append_samples` 不在锁内扩容;`ParametricEqPlugin` 不在 `process` 内重建 / 分配
+- [x] **G4** 引擎:`append_samples` 不在锁内扩容;`ParametricEqPlugin` 不在 `process` 内重建 / 分配
+  - DONE: samples 改 `RwLock`,扩容在读锁下拷贝、写锁只做交换;`ParametricEq::set_band` 原地换系数并保留滤波器状态(格式变化时仍重建)
 - [ ] **G5** Studio:EQ / 效果 / 播放前重采样 / 整轨 FFT 移出 UI 线程
 - [ ] **G6** 管线:`assemble_segments` 的 O(n²) 合并;`generate_episode` 改用并发 TTS(时间轴已按 span 计算,不再需要顺序合成)
 - [ ] **G7** LUFS 真峰值相位偏移(0.375/0.625/0.875 → 0.25/0.5/0.75)
