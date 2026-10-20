@@ -29,6 +29,7 @@
 - **v0.7.2**: 评估遗留(阻塞工作移出 async / UI 线程、provider 重试与超时、引擎实时安全、
   真峰值相位、AAC 尾部、FLAC 回读、Edge TTS 恢复可用)
 - **v0.7.3**: 架构复评(压缩器插件 ratio 改为 dB 域、滤波插件全声道、内存解码 `decode_audio`、脚本生成重试)
+- **v0.8**: 模型 provider 可配置(MiniMax / Qwen / GLM / StepFun 预置 + OpenAI 兼容自部署;TTS 按字数、STT 按时长自动切分;播客分段按响度对齐),见 [docs/providers.md](./docs/providers.md)
 
 ## v0.7 计划 — AI 播客生产就绪 + MCP 暴露
 
@@ -88,7 +89,7 @@
 
 已完成:流式 TTS、EffectChain 统一到 `DspPlugin`(v0.7.1 删除了 `AudioEffect`)、wasm-pack demo。
 
-- crates.io 暂不发布(`phonon` 已被无关项目占用,见 docs/publishing.md);v0.7.0 / v0.7.3 已打 tag
+- crates.io 暂不发布(`phonon` 已被无关项目占用,见 docs/publishing.md);v0.7.0 / v0.7.3 / v0.8.0 已打 tag
 - VST3 / CLAP 兼容层 —— v0.7.1 删除了无 FFI 的 `phonon-plugin` 骨架;
   **重估条件**:出现需要加载 Phonon 插件的真实宿主
 

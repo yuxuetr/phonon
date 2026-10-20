@@ -16,7 +16,7 @@ readme = "README.md"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-phonon-core = { path = "../phonon-core", version = "0.7.0", default-features = false }
+phonon-core = { path = "../phonon-core", version = "0.8.0", default-features = false }
 wasm-bindgen.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }

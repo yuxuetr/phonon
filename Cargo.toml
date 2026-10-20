@@ -12,7 +12,7 @@ members = ["phonon-cli","phonon-core", "phonon-engine",
 resolver = "2"
 
 [workspace.package]
-version = "0.7.3"
+version = "0.8.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -24,14 +24,14 @@ readme = "README.md"
 [workspace.dependencies]
 # Internal crates — version pinned to the workspace release line so
 # every crate publishes/resolves together.
-phonon-core = { path = "phonon-core", version = "0.7.3" }
-phonon-wav = { path = "phonon-wav", version = "0.7.3" }
-phonon-io = { path = "phonon-io", version = "0.7.3" }
-phonon-engine = { path = "phonon-engine", version = "0.7.3" }
-phonon-ai = { path = "phonon-ai", version = "0.7.3" }
-phonon-podcast = { path = "phonon-podcast", version = "0.7.3" }
-phonon-video = { path = "phonon-video", version = "0.7.3" }
-phonon-mcp = { path = "phonon-mcp", version = "0.7.3" }
+phonon-core = { path = "phonon-core", version = "0.8.0" }
+phonon-wav = { path = "phonon-wav", version = "0.8.0" }
+phonon-io = { path = "phonon-io", version = "0.8.0" }
+phonon-engine = { path = "phonon-engine", version = "0.8.0" }
+phonon-ai = { path = "phonon-ai", version = "0.8.0" }
+phonon-podcast = { path = "phonon-podcast", version = "0.8.0" }
+phonon-video = { path = "phonon-video", version = "0.8.0" }
+phonon-mcp = { path = "phonon-mcp", version = "0.8.0" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

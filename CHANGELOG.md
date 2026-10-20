@@ -3,7 +3,7 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 ---
-## v0.8.0 (unreleased) — configurable model providers
+## v0.8.0 - 2026-10-20 — configurable model providers
 
 Items J1–J10 in [Todos.md](./Todos.md); usage and design record in
 [docs/providers.md](./docs/providers.md).

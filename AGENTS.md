@@ -102,9 +102,9 @@ phonon/
 
 ## 当前开发阶段
 
-**已完成**: v0.1 (WAV) → v0.2 (pydub等价) → v0.3 (播客Agent) → v0.4 (STT/字幕/视频/Server) → v0.5 (sinc resampler/多格式/EffectChain/CI) → v0.6 (EQ/rayon/Studio UI/Wasm/Plugin) → **v0.7 (LUFS/MP3+FLAC+OGG tags/Pan/TTS cache/AI BGM 接管线/Episode export/MCP server)**
+**已完成**: v0.1 (WAV) → v0.2 (pydub等价) → v0.3 (播客Agent) → v0.4 (STT/字幕/视频/Server) → v0.5 (sinc resampler/多格式/EffectChain/CI) → v0.6 (EQ/rayon/Studio UI/Wasm/Plugin) → v0.7 (LUFS/MP3+FLAC+OGG tags/Pan/TTS cache/AI BGM 接管线/Episode export/MCP server) → **v0.8 (可配置模型 provider)**
 
-**当前版本**: v0.7.3(评估修复 v0.7.1 + 遗留项 v0.7.2 + 架构复评 v0.7.3,见 [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md))
+**当前版本**: v0.8.0(模型 provider 可配置，见 [docs/providers.md](./docs/providers.md);此前:评估修复 v0.7.1 + 遗留项 v0.7.2 + 架构复评 v0.7.3,见 [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md))
 
 **phonon-core 特性**:
 - `features = ["parallel", "simd"]`(默认开启)— rayon 并行 + NEON/SSE SIMD,其他架构走标量
