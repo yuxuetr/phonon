@@ -140,3 +140,28 @@
   - DONE: 默认 1 GiB PCM 上限 + `RegistryFull`;9 处 `insert(buf.clone())` 改为 `store()` 先取元数据再 move
 - [x] **G10** Replicate 轮询 / 下载未检查 HTTP 状态码;ElevenLabs `voice_id` 未转义直接拼进 URL
   - DONE: `ensure_success` 用于轮询与下载(下载也走重试);`tts_url` 以单个编码路径段放入 voice_id
+
+## v0.7.3 — 架构项复评
+
+> 对 [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md) 架构 3–6 逐条重新核实(2026-10-20)。
+> 只做有当前证据的项;不做的写明重估条件。
+
+- [ ] **H1** 压缩器插件的 `ratio` 在线性幅度域计算,不是压缩比(阈值 0.5、ratio 20、输入 1.0 → 输出高出阈值 0.42 dB,实际约 14:1;ratio 4 实际约 3:1),与 `compress()` 的 dB 域结果不一致
+  - 做法:`compress()` 与 `CompressorPlugin` 共用 compressor.rs 中同一个逐帧增益计算;插件参数不变(threshold 仍为 0–1 线性,内部换算 dB)
+- [ ] **H2** `LowPassPlugin` / `HighPassPlugin` 状态固定 2 声道,第 3 声道起原样通过
+  - 做法:状态按声道数分配,格式变化时重置
+- [ ] **H3** 字节解码五份复制(4 个 TTS provider + Replicate + server),每份都先写临时文件再读
+  - 做法:phonon-io 增加 `decode_audio(bytes, ext_hint)`,内存解码;`read_audio` 共用同一解码循环
+- [ ] **H4** `filters::filter()` 自带一份与 `ParametricEq` 相同的 DF-I biquad 循环
+  - 做法:`filter()` 改为单频段 `ParametricEq`
+- [ ] **H5** `OpenAiScriptGenerator` 不走 G2 的重试(429 / 5xx 直接失败),且 LLM 错误被归为 `PodcastError::Tts`
+  - 做法:公开 `phonon_ai::retry_transient` 并在脚本生成中使用;错误归为 `Script`
+- [ ] **H6** phonon-cli 声明了未使用的 phonon-wav 依赖
+
+不做(当前版本):
+- **lufs.rs 的 biquad**:系数按 BS.1770 规范直接给出(DF-II 转置),与 RBJ cookbook 不同;可共享的只有 3 行差分方程。
+  重估条件:出现第三个 DF-II 用户
+- **phonon-wav 并入 phonon-io**:`write_wav` 本身就是 phonon-io 的 WAV 编码器,不是重复;`read_wav` 唯一调用方是 TTS 缓存,读取的是自己写出的 16-bit 文件,能力缺口不会触发。
+  重估条件:`grep -rn "phonon_wav::read_wav" --include='*.rs' . | grep -v cache.rs` 有输出
+- **AI trait RPITIT → dyn**:server 仍只用 Edge TTS(无需 API key)。重估条件:server 需要按请求或配置切换 provider
+- **server 限流**:默认只监听 127.0.0.1。重估条件:默认监听地址改为非回环,或文档推荐公网部署
