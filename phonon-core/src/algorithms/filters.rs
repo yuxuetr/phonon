@@ -105,74 +105,73 @@ pub(crate) fn calculate_coefficients(
   // Convert gain from dB to linear
   let a = 10.0_f64.powf(gain_db / 40.0); // For shelf/peaking. Audio EQ Cookbook uses A = 10^(dB/40)
 
-  let b0;
-  let b1;
-  let b2;
-  let a0;
-  let a1;
-  let a2;
-
-  match filter_type {
-    FilterType::LowPass => {
-      b0 = (1.0 - cos_w0) / 2.0;
-      b1 = 1.0 - cos_w0;
-      b2 = (1.0 - cos_w0) / 2.0;
-      a0 = 1.0 + alpha;
-      a1 = -2.0 * cos_w0;
-      a2 = 1.0 - alpha;
-    }
-    FilterType::HighPass => {
-      b0 = (1.0 + cos_w0) / 2.0;
-      b1 = -(1.0 + cos_w0);
-      b2 = (1.0 + cos_w0) / 2.0;
-      a0 = 1.0 + alpha;
-      a1 = -2.0 * cos_w0;
-      a2 = 1.0 - alpha;
-    }
+  let (b0, b1, b2, a0, a1, a2) = match filter_type {
+    FilterType::LowPass => (
+      (1.0 - cos_w0) / 2.0,
+      1.0 - cos_w0,
+      (1.0 - cos_w0) / 2.0,
+      1.0 + alpha,
+      -2.0 * cos_w0,
+      1.0 - alpha,
+    ),
+    FilterType::HighPass => (
+      (1.0 + cos_w0) / 2.0,
+      -(1.0 + cos_w0),
+      (1.0 + cos_w0) / 2.0,
+      1.0 + alpha,
+      -2.0 * cos_w0,
+      1.0 - alpha,
+    ),
     FilterType::BandPass => {
       // Constant Skirt Gain, peak gain = Q
-      b0 = sin_w0 / 2.0;
-      b1 = 0.0;
-      b2 = -sin_w0 / 2.0;
-      a0 = 1.0 + alpha;
-      a1 = -2.0 * cos_w0;
-      a2 = 1.0 - alpha;
+      (
+        sin_w0 / 2.0,
+        0.0,
+        -sin_w0 / 2.0,
+        1.0 + alpha,
+        -2.0 * cos_w0,
+        1.0 - alpha,
+      )
     }
-    FilterType::Notch => {
-      b0 = 1.0;
-      b1 = -2.0 * cos_w0;
-      b2 = 1.0;
-      a0 = 1.0 + alpha;
-      a1 = -2.0 * cos_w0;
-      a2 = 1.0 - alpha;
-    }
-    FilterType::Peaking => {
-      b0 = 1.0 + alpha * a;
-      b1 = -2.0 * cos_w0;
-      b2 = 1.0 - alpha * a;
-      a0 = 1.0 + alpha / a;
-      a1 = -2.0 * cos_w0;
-      a2 = 1.0 - alpha / a;
-    }
+    FilterType::Notch => (
+      1.0,
+      -2.0 * cos_w0,
+      1.0,
+      1.0 + alpha,
+      -2.0 * cos_w0,
+      1.0 - alpha,
+    ),
+    FilterType::Peaking => (
+      1.0 + alpha * a,
+      -2.0 * cos_w0,
+      1.0 - alpha * a,
+      1.0 + alpha / a,
+      -2.0 * cos_w0,
+      1.0 - alpha / a,
+    ),
     FilterType::LowShelf => {
       let sqrt_a = a.sqrt();
-      b0 = a * ((a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha);
-      b1 = 2.0 * a * ((a - 1.0) - (a + 1.0) * cos_w0);
-      b2 = a * ((a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha);
-      a0 = (a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha;
-      a1 = -2.0 * ((a - 1.0) + (a + 1.0) * cos_w0);
-      a2 = (a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha;
+      (
+        a * ((a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha),
+        2.0 * a * ((a - 1.0) - (a + 1.0) * cos_w0),
+        a * ((a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha),
+        (a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha,
+        -2.0 * ((a - 1.0) + (a + 1.0) * cos_w0),
+        (a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha,
+      )
     }
     FilterType::HighShelf => {
       let sqrt_a = a.sqrt();
-      b0 = a * ((a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha);
-      b1 = -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0);
-      b2 = a * ((a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha);
-      a0 = (a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha;
-      a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos_w0);
-      a2 = (a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha;
+      (
+        a * ((a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha),
+        -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0),
+        a * ((a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha),
+        (a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha,
+        2.0 * ((a - 1.0) - (a + 1.0) * cos_w0),
+        (a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha,
+      )
     }
-  }
+  };
 
   // Normalize coefficients by a0
   Coefficients {

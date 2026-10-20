@@ -859,6 +859,34 @@ fn load_cover(path: Option<&std::path::Path>) -> anyhow::Result<Option<CoverArt>
   }))
 }
 
+/// Parse a chapter list from JSON. Accepts the canonical
+/// `[{"title":"…","start_secs":0.0,"end_secs":1.0}, …]` shape used by the
+/// `tag-mp3` subcommand.
+fn load_chapters_json(path: &std::path::Path) -> anyhow::Result<Vec<AudioChapter>> {
+  let text = std::fs::read_to_string(path)?;
+  let raw: serde_json::Value = serde_json::from_str(&text)?;
+  let arr = raw
+    .as_array()
+    .ok_or_else(|| anyhow::anyhow!("chapters JSON must be a top-level array"))?;
+  let mut chapters = Vec::with_capacity(arr.len());
+  for (i, item) in arr.iter().enumerate() {
+    let title = item
+      .get("title")
+      .and_then(|v| v.as_str())
+      .ok_or_else(|| anyhow::anyhow!("chapter {i}: missing string field 'title'"))?;
+    let start_secs = item
+      .get("start_secs")
+      .and_then(|v| v.as_f64())
+      .ok_or_else(|| anyhow::anyhow!("chapter {i}: missing number field 'start_secs'"))?;
+    let end_secs = item
+      .get("end_secs")
+      .and_then(|v| v.as_f64())
+      .ok_or_else(|| anyhow::anyhow!("chapter {i}: missing number field 'end_secs'"))?;
+    chapters.push(AudioChapter::new(title.to_string(), start_secs, end_secs));
+  }
+  Ok(chapters)
+}
+
 #[cfg(test)]
 mod helper_tests {
   use super::*;
@@ -921,32 +949,4 @@ mod helper_tests {
     let err = load_chapters_json(tmp.path()).unwrap_err();
     assert!(err.to_string().contains("end_secs"));
   }
-}
-
-/// Parse a chapter list from JSON. Accepts the canonical
-/// `[{"title":"…","start_secs":0.0,"end_secs":1.0}, …]` shape used by the
-/// `tag-mp3` subcommand.
-fn load_chapters_json(path: &std::path::Path) -> anyhow::Result<Vec<AudioChapter>> {
-  let text = std::fs::read_to_string(path)?;
-  let raw: serde_json::Value = serde_json::from_str(&text)?;
-  let arr = raw
-    .as_array()
-    .ok_or_else(|| anyhow::anyhow!("chapters JSON must be a top-level array"))?;
-  let mut chapters = Vec::with_capacity(arr.len());
-  for (i, item) in arr.iter().enumerate() {
-    let title = item
-      .get("title")
-      .and_then(|v| v.as_str())
-      .ok_or_else(|| anyhow::anyhow!("chapter {i}: missing string field 'title'"))?;
-    let start_secs = item
-      .get("start_secs")
-      .and_then(|v| v.as_f64())
-      .ok_or_else(|| anyhow::anyhow!("chapter {i}: missing number field 'start_secs'"))?;
-    let end_secs = item
-      .get("end_secs")
-      .and_then(|v| v.as_f64())
-      .ok_or_else(|| anyhow::anyhow!("chapter {i}: missing number field 'end_secs'"))?;
-    chapters.push(AudioChapter::new(title.to_string(), start_secs, end_secs));
-  }
-  Ok(chapters)
 }

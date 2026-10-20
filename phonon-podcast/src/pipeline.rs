@@ -4,7 +4,6 @@ use crate::export::{Episode, build_episode_metadata};
 use crate::script::PodcastScript;
 use phonon_ai::{AiError, SoundGenProvider, SoundPrompt, TtsProvider};
 use phonon_core::{self, AudioBuffer};
-use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -18,17 +17,12 @@ use tracing::{info, instrument};
 pub struct NoSoundGen;
 
 impl SoundGenProvider for NoSoundGen {
-  fn generate(
-    &self,
-    _prompt: &SoundPrompt,
-  ) -> impl Future<Output = Result<AudioBuffer, AiError>> + Send {
-    async {
-      Err(AiError::Config(
-        "AssetSource::Generated requires a SoundGenProvider — call \
-         PodcastPipeline::with_sound_gen() first"
-          .to_string(),
-      ))
-    }
+  async fn generate(&self, _prompt: &SoundPrompt) -> Result<AudioBuffer, AiError> {
+    Err(AiError::Config(
+      "AssetSource::Generated requires a SoundGenProvider — call \
+       PodcastPipeline::with_sound_gen() first"
+        .to_string(),
+    ))
   }
 }
 

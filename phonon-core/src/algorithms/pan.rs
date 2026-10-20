@@ -105,8 +105,16 @@ mod tests {
   fn test_gains_center_is_minus_3db() {
     let (l, r) = constant_power_gains(0.0);
     // Both channels should be sqrt(0.5) ≈ 0.7071.
-    assert!((l - 0.7071068).abs() < 1e-5, "l = {}", l);
-    assert!((r - 0.7071068).abs() < 1e-5, "r = {}", r);
+    assert!(
+      (l - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-5,
+      "l = {}",
+      l
+    );
+    assert!(
+      (r - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-5,
+      "r = {}",
+      r
+    );
     // Constant-power invariant.
     assert!(((l * l + r * r) - 1.0).abs() < 1e-5);
   }
@@ -163,8 +171,8 @@ mod tests {
     assert_eq!(stereo.channels, 2);
     assert_eq!(stereo.samples.len(), 6);
     // First frame: L=R=1.0 * sqrt(0.5)
-    assert!((stereo.samples[0] - 0.7071068).abs() < 1e-5);
-    assert!((stereo.samples[1] - 0.7071068).abs() < 1e-5);
+    assert!((stereo.samples[0] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-5);
+    assert!((stereo.samples[1] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-5);
     Ok(())
   }
 

@@ -4,3 +4,6 @@ node_modules/
 phonon-studio/tailwind.css
 phonon-wasm/www/pkg/
 .claude/
+
+# Machine-local cargo config (target-dir, linker flags)
+.cargo/config.toml

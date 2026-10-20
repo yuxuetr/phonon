@@ -385,8 +385,8 @@ fn tp_kernels() -> [[f64; TP_TAPS_PER_PHASE]; TP_PHASES] {
   let mut out = [[0.0; TP_TAPS_PER_PHASE]; TP_PHASES];
   let total = TP_PHASES * TP_TAPS_PER_PHASE;
   let center = (total as f64 - 1.0) / 2.0;
-  for phase in 0..TP_PHASES {
-    for tap in 0..TP_TAPS_PER_PHASE {
+  for (phase, taps) in out.iter_mut().enumerate() {
+    for (tap, coeff) in taps.iter_mut().enumerate() {
       let n = (tap * TP_PHASES + phase) as f64;
       let x = n - center;
       let arg = PI * x / TP_PHASES as f64;
@@ -397,7 +397,7 @@ fn tp_kernels() -> [[f64; TP_TAPS_PER_PHASE]; TP_PHASES] {
       };
       // Hamming window over [0, total-1].
       let win = 0.54 - 0.46 * (2.0 * PI * n / (total as f64 - 1.0)).cos();
-      out[phase][tap] = sinc * win;
+      *coeff = sinc * win;
     }
   }
   // Normalize each phase independently to unity DC gain.
@@ -447,11 +447,11 @@ pub fn true_peak(buffer: &AudioBuffer) -> f32 {
     for i in half..n - half {
       let s = ch[i] as f64;
       peak = peak.max(s.abs());
-      for phase in 1..TP_PHASES {
+      for taps in &kernels[1..] {
         let mut acc = 0.0_f64;
-        for tap in 0..TP_TAPS_PER_PHASE {
+        for (tap, &coeff) in taps.iter().enumerate() {
           let src = i + half - tap;
-          acc += kernels[phase][tap] * ch[src] as f64;
+          acc += coeff * ch[src] as f64;
         }
         peak = peak.max(acc.abs());
       }

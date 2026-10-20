@@ -1,5 +1,0 @@
-[build]
-target-dir = "/Users/hal/.target"
-
-[target.x86_64-apple-darwin]
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]

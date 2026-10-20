@@ -102,8 +102,7 @@ pub fn attach_tag(
       let element_id = format!("ch{}", i);
       element_ids.push(element_id.clone());
 
-      let mut sub_frames = Vec::new();
-      sub_frames.push(Frame::with_content("TIT2", Content::Text(ch.title.clone())));
+      let sub_frames = vec![Frame::with_content("TIT2", Content::Text(ch.title.clone()))];
 
       let chap = Id3Chapter {
         element_id,
