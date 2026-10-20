@@ -192,7 +192,8 @@
   - 做法:`OpenAiScriptGenerator` 支持合并额外请求字段;解析前剥掉 `<think>…</think>` 与代码围栏
   - 验收：五家 LLM 各生成一份脚本并解析成功
   - DONE: `with_extra_body` + `json_payload`(剥 `<think>` 与代码围栏);五家各生成 4 段脚本并解析成功(DeepSeek 2.2 s 最快,MiniMax 20.9 s 最慢)(280f25a)
-- [ ] **J3** Qwen TTS(DashScope 原生：返回音频 URL,需二次下载)
+- [x] **J3** Qwen TTS(DashScope 原生：返回音频 URL,需二次下载)
+  - DONE: `QwenTts`(生成 + 下载两次请求，均重试);`ensure_success` 移入 client.rs 共用;联网 Cherry / Ethan 通过，错误音色返回 400(4da733e)
 - [ ] **J4** Qwen STT(DashScope 原生，词级时间戳 → 按句组装 segments)
 - [ ] **J5** 配置模块：预置 + TOML + 按 key 自动选择 + `AnyTts` / `AnyStt` / `ChatEndpoint`
   - 验收：单元测试覆盖查找顺序、自动选择顺序、自定义 provider、缺字段报错
