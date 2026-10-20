@@ -58,7 +58,7 @@ pub struct TranscriptResult {
 }
 
 /// Options for transcription requests.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct TranscribeOptions {
   /// Language hint (ISO-639-1 code, e.g. "en", "zh").
   /// If `None`, the model auto-detects.
@@ -71,14 +71,23 @@ pub struct TranscribeOptions {
   pub temperature: f64,
 }
 
+// Hand-written so `None` options (which use `unwrap_or_default()`) get
+// timed segments, matching the documented default.
+impl Default for TranscribeOptions {
+  fn default() -> Self {
+    Self {
+      language: None,
+      prompt: None,
+      timestamps: true,
+      temperature: 0.0,
+    }
+  }
+}
+
 impl TranscribeOptions {
   /// Create default options with timestamps enabled.
   pub fn new() -> Self {
-    Self {
-      timestamps: true,
-      temperature: 0.0,
-      ..Default::default()
-    }
+    Self::default()
   }
 
   /// Set the language hint.
@@ -335,6 +344,12 @@ impl SttProvider for WhisperStt {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn test_default_options_request_timestamps() {
+    assert!(TranscribeOptions::default().timestamps);
+    assert!(TranscribeOptions::new().timestamps);
+  }
 
   #[test]
   fn test_transcribe_options_defaults() {
