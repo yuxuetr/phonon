@@ -393,7 +393,9 @@ impl DspPlugin for CompressorPlugin {
   fn get_parameter(&self, name: &str) -> Option<f32> {
     find_param(&self.params, name)
   }
-  fn process(&mut self, samples: &mut [f32], sample_rate: u32, _channels: u16) {
+  /// Channels are linked: one envelope per frame (driven by the frame's
+  /// peak) and one gain for all its channels.
+  fn process(&mut self, samples: &mut [f32], sample_rate: u32, channels: u16) {
     let threshold = self.params[0].current;
     let ratio = self.params[1].current;
     let attack_ms = self.params[2].current;
@@ -402,8 +404,8 @@ impl DspPlugin for CompressorPlugin {
     let attack = (-1.0 / (attack_ms * 0.001 * sample_rate as f32)).exp();
     let release = (-1.0 / (release_ms * 0.001 * sample_rate as f32)).exp();
 
-    for s in samples.iter_mut() {
-      let input_abs = s.abs();
+    for frame in samples.chunks_mut((channels as usize).max(1)) {
+      let input_abs = frame.iter().fold(0.0f32, |m, s| m.max(s.abs()));
       if input_abs > self.envelope {
         self.envelope = attack * self.envelope + (1.0 - attack) * input_abs;
       } else {
@@ -419,7 +421,9 @@ impl DspPlugin for CompressorPlugin {
         } else {
           1.0
         };
-        *s *= gain;
+        for s in frame {
+          *s *= gain;
+        }
       }
     }
   }
@@ -536,6 +540,26 @@ pub fn apply_plugin(plugin: &mut dyn DspPlugin, buffer: &mut AudioBuffer) {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn test_compressor_plugin_stereo_dynamics_match_mono() {
+    let quiet = 2_400;
+    let mono: Vec<f32> = (0..quiet * 2)
+      .map(|i| if i < quiet { 0.05 } else { 0.9 })
+      .collect();
+    let mut stereo: Vec<f32> = mono.iter().flat_map(|&s| [s, s]).collect();
+    let mut mono = mono;
+
+    CompressorPlugin::default().process(&mut mono, 48_000, 1);
+    CompressorPlugin::default().process(&mut stereo, 48_000, 2);
+
+    for (i, (&m, frame)) in mono.iter().zip(stereo.chunks(2)).enumerate() {
+      assert!(
+        (m - frame[0]).abs() < 1e-6 && (m - frame[1]).abs() < 1e-6,
+        "frame {i}: mono {m} vs stereo {frame:?}"
+      );
+    }
+  }
 
   #[test]
   fn test_volume_plugin_default() {

@@ -77,8 +77,9 @@ impl CompressorConfig {
 
 /// Applies dynamic range compression to the audio buffer **in place**.
 ///
-/// Processes all channels interleaved; the envelope is computed from
-/// the absolute sample value, so left/right are compressed together.
+/// Channels are linked: the envelope follows the peak of each frame and the
+/// same gain is applied to every channel, so the stereo image is preserved
+/// and attack/release times hold regardless of channel count.
 ///
 /// # Example
 ///
@@ -99,8 +100,9 @@ pub fn compress(buffer: &mut AudioBuffer, config: &CompressorConfig) {
   }
 
   let sample_rate = buffer.sample_rate as f64;
+  let channels = (buffer.channels as usize).max(1);
 
-  // Compute smoothing coefficients from attack/release times.
+  // Compute smoothing coefficients (per frame) from attack/release times.
   // Using a simple one-pole envelope follower:
   //   coeff = exp(-1 / (time * sample_rate))
   let attack_coeff = if config.attack_secs > 0.0 {
@@ -121,8 +123,8 @@ pub fn compress(buffer: &mut AudioBuffer, config: &CompressorConfig) {
 
   let mut envelope: f32 = 0.0;
 
-  for sample in &mut buffer.samples {
-    let input_abs = sample.abs();
+  for frame in buffer.samples.chunks_mut(channels) {
+    let input_abs = frame.iter().fold(0.0f32, |m, s| m.max(s.abs()));
 
     // Envelope follower (peak detector with attack/release)
     let coeff = if input_abs > envelope {
@@ -146,7 +148,10 @@ pub fn compress(buffer: &mut AudioBuffer, config: &CompressorConfig) {
       1.0
     };
 
-    *sample *= gain * makeup_linear;
+    let frame_gain = gain * makeup_linear;
+    for sample in frame {
+      *sample *= frame_gain;
+    }
   }
 }
 
@@ -173,6 +178,48 @@ fn linear_to_db(linear: f32) -> f32 {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  /// Quiet for 50 ms, then loud: exercises attack timing.
+  fn step_signal(sample_rate: u32) -> Vec<f32> {
+    let quiet = (sample_rate / 20) as usize;
+    (0..quiet * 2)
+      .map(|i| if i < quiet { 0.05 } else { 0.9 })
+      .collect()
+  }
+
+  fn interleave_stereo(mono: &[f32]) -> Vec<f32> {
+    mono.iter().flat_map(|&s| [s, s]).collect()
+  }
+
+  #[test]
+  fn test_stereo_dynamics_match_mono() {
+    let mono_samples = step_signal(48_000);
+    let mut mono = AudioBuffer {
+      samples: mono_samples.clone(),
+      sample_rate: 48_000,
+      channels: 1,
+    };
+    let mut stereo = AudioBuffer {
+      samples: interleave_stereo(&mono_samples),
+      sample_rate: 48_000,
+      channels: 2,
+    };
+    let config = CompressorConfig::default();
+    compress(&mut mono, &config);
+    compress(&mut stereo, &config);
+
+    for (i, (&m, frame)) in mono
+      .samples
+      .iter()
+      .zip(stereo.samples.chunks(2))
+      .enumerate()
+    {
+      assert!(
+        (m - frame[0]).abs() < 1e-6 && (m - frame[1]).abs() < 1e-6,
+        "frame {i}: mono {m} vs stereo {frame:?}"
+      );
+    }
+  }
 
   #[test]
   fn test_compress_empty_buffer() {
