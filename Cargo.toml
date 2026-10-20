@@ -68,7 +68,6 @@ metaflac = "0.2"
 blake3 = "1"
 dirs = "5"
 uuid = { version = "1", features = ["v4", "serde"] }
-schemars = "0.8"
 
 # Math / DSP
 num-complex = "0.4.6"

@@ -44,15 +44,3 @@ impl From<phonon_core::PhononError> for McpError {
     Self::Audio(value.to_string())
   }
 }
-
-impl From<phonon_ai::AiError> for McpError {
-  fn from(value: phonon_ai::AiError) -> Self {
-    Self::Audio(value.to_string())
-  }
-}
-
-impl From<phonon_podcast::PodcastError> for McpError {
-  fn from(value: phonon_podcast::PodcastError) -> Self {
-    Self::Audio(value.to_string())
-  }
-}

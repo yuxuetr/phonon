@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
-description = "Desktop GUI for the Phonon audio engine — Dioxus-based studio with effect chain, EQ, and podcast generation"
+description = "Desktop GUI for the Phonon audio engine — Dioxus-based studio with effect chain, EQ, spectrum and plugin browser"
 keywords = ["audio", "gui", "dioxus", "phonon"]
 categories = ["multimedia::audio", "gui"]
 publish = false
@@ -19,8 +19,6 @@ phonon-wav.workspace = true
 phonon-io.workspace = true
 phonon-core.workspace = true
 phonon-engine.workspace = true
-phonon-podcast.workspace = true
-phonon-ai.workspace = true
 rfd.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 
