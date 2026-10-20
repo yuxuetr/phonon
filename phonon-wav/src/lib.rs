@@ -54,16 +54,38 @@ pub fn read_wav<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
 #[instrument(skip(buffer, path), fields(path = %path.as_ref().display(), duration = buffer.duration_secs()))]
 pub fn write_wav<P: AsRef<Path>>(path: P, buffer: &AudioBuffer) -> Result<()> {
   info!("Writing WAV file");
-  let spec = hound::WavSpec {
+  let spec = spec_for(buffer);
+  let writer = hound::WavWriter::create(path, spec)
+    .map_err(|e| PhononError::Wav(format!("Failed to create file: {}", e)))?;
+  write_samples(writer, buffer)?;
+
+  info!("Write complete");
+  Ok(())
+}
+
+/// Encode an AudioBuffer as an in-memory 16-bit PCM WAV file, e.g. to
+/// upload it to an API.
+pub fn encode_wav(buffer: &AudioBuffer) -> Result<Vec<u8>> {
+  let mut bytes = std::io::Cursor::new(Vec::new());
+  let writer = hound::WavWriter::new(&mut bytes, spec_for(buffer))
+    .map_err(|e| PhononError::Wav(format!("Failed to start WAV: {}", e)))?;
+  write_samples(writer, buffer)?;
+  Ok(bytes.into_inner())
+}
+
+fn spec_for(buffer: &AudioBuffer) -> hound::WavSpec {
+  hound::WavSpec {
     channels: buffer.channels,
     sample_rate: buffer.sample_rate,
     bits_per_sample: 16,
     sample_format: hound::SampleFormat::Int,
-  };
+  }
+}
 
-  let mut writer = hound::WavWriter::create(path, spec)
-    .map_err(|e| PhononError::Wav(format!("Failed to create file: {}", e)))?;
-
+fn write_samples<W: std::io::Write + std::io::Seek>(
+  mut writer: hound::WavWriter<W>,
+  buffer: &AudioBuffer,
+) -> Result<()> {
   for &sample in &buffer.samples {
     // Clamp to avoid integer overflow/wrapping which sounds terrible
     let clamped = sample.clamp(-1.0, 1.0);
@@ -72,13 +94,9 @@ pub fn write_wav<P: AsRef<Path>>(path: P, buffer: &AudioBuffer) -> Result<()> {
       .write_sample(scaled)
       .map_err(|e| PhononError::Wav(format!("Write error: {}", e)))?;
   }
-
   writer
     .finalize()
-    .map_err(|e| PhononError::Wav(format!("Finalize error: {}", e)))?;
-
-  info!("Write complete");
-  Ok(())
+    .map_err(|e| PhononError::Wav(format!("Finalize error: {}", e)))
 }
 
 #[cfg(test)]
@@ -132,6 +150,21 @@ mod tests {
     // Clean up
     let _ = fs::remove_file(file_path);
 
+    Ok(())
+  }
+
+  #[test]
+  fn test_encode_wav_matches_written_file() -> Result<()> {
+    let buffer = AudioBuffer {
+      samples: vec![0.0, 0.5, -0.5, 1.0, -1.0, 0.25],
+      sample_rate: 16000,
+      channels: 2,
+    };
+    let path = std::env::temp_dir().join("test_phonon_encode_wav.wav");
+    write_wav(&path, &buffer)?;
+    let written = fs::read(&path)?;
+    let _ = fs::remove_file(&path);
+    assert_eq!(encode_wav(&buffer)?, written);
     Ok(())
   }
 }

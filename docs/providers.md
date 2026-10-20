@@ -19,7 +19,7 @@ Phonon 的 TTS(语音合成)、STT(语音识别)、LLM(播客脚本生成)都可
 | 预置 | API key 环境变量 | TTS | STT | LLM |
 |---|---|---|---|---|
 | `minimax` | `MINIMAX_API_KEY` | speech-2.8-hd | asr-1.0(带时间戳) | MiniMax-M3.1-Flash |
-| `qwen` | `DASHSCOPE_API_KEY` | qwen3-tts-flash | qwen-audio-3.0-asr-flash(带时间戳) | qwen3.8-flash |
+| `qwen` | `DASHSCOPE_API_KEY` | qwen3-tts-flash | qwen-audio-3.0-asr-flash(带时间戳，单次 ≤300 s,自动切分) | qwen3.8-flash |
 | `glm` | `ZHIPU_API_KEY` | glm-tts | glm-asr(带时间戳，单次 ≤30 s,自动切分) | glm-4.7 |
 | `stepfun` | `STEP_API_KEY` | step-tts-2 | stepaudio-2.5-asr(**无时间戳**) | step-3.7-flash |
 | `deepseek` | `DEEPSEEK_API_KEY` | — | — | deepseek-flash |
@@ -41,7 +41,7 @@ max_chars = 600            # 可选，单次请求最大字符数，超过自动
 
 [stt]
 provider = "glm"
-max_secs = 30              # 可选，单次请求最大音频时长，超过自动切分
+max_secs = 29              # 可选，单次请求最大音频时长(秒),超过自动切分;预置 glm 29、qwen 290
 
 [llm]
 provider = "deepseek"
@@ -86,6 +86,9 @@ CLI 的 `--provider` 只有 edge / openai,server 写死 Edge。国内厂商除 M
   - StepFun STT 拒绝 `verbose_json`,也不返回时间戳;GLM STT 不需 `verbose_json` 就返回 segments。
   - GLM STT 单次 ≤30 s(超过返回 400 code 1214)→ 按时长切分;只有 `glm-asr` 返回 segments,
     `glm-asr-2512` 只返回文本。
+  - Qwen STT 单次 ≤300 s(433 s 返回 400 `AUDIO_DURATION_TOO_LONG`);MiniMax、StepFun 433 s 均正常，
+    不设上限。超限时重编码为 16 kHz 单声道 WAV,在窗口末四分之一里最安静的 20 ms 处切开，
+    逐段识别后平移时间戳拼接。
   - MiniMax STT 请求体与 OpenAI 相同，但路径是 `/speech_to_text` → 路径可配。
   - TTS 单次长度上限:Qwen 600 字、GLM 1024、StepFun 1000 → 按句切分。
     Qwen 预置取 200 而非 600:同一段 594 字的文本三次合成，时长分别为 153、176、248 s,

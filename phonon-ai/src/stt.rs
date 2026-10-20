@@ -21,6 +21,7 @@
 
 use crate::AiError;
 use crate::client::HttpClient;
+use phonon_core::AudioBuffer;
 use serde::Deserialize;
 use std::future::Future;
 use std::path::Path;
@@ -368,6 +369,91 @@ impl SttProvider for WhisperStt {
   }
 }
 
+/// Split mono `samples` into consecutive `(start, end)` ranges no longer than
+/// `max_len`, cutting at the quietest 20 ms block in the last quarter of each
+/// window so words are not split where avoidable.
+pub(crate) fn chunk_ranges(
+  samples: &[f32],
+  sample_rate: u32,
+  max_len: usize,
+) -> Vec<(usize, usize)> {
+  let block = (sample_rate as usize / 50).max(1);
+  let max_len = max_len.max(block);
+  let mut ranges = Vec::new();
+  let mut start = 0;
+  while samples.len() - start > max_len {
+    let window_end = start + max_len;
+    let search_from = window_end - max_len / 4;
+    let energy = |at: usize| samples[at..at + block].iter().map(|s| s * s).sum::<f32>();
+    let cut = (search_from..=window_end - block)
+      .step_by(block)
+      .min_by(|&a, &b| energy(a).total_cmp(&energy(b)))
+      .map_or(window_end, |at| at + block / 2);
+    ranges.push((start, cut));
+    start = cut;
+  }
+  ranges.push((start, samples.len()));
+  ranges
+}
+
+/// Sample rate of the chunks sent to providers with a duration limit; speech
+/// models work at 16 kHz, and it keeps a chunk's WAV small.
+const CHUNK_SAMPLE_RATE: u32 = 16_000;
+
+/// Re-encode `audio` as mono 16 kHz WAV pieces of at most `max_secs`, each
+/// paired with its start time in seconds.
+pub(crate) fn wav_chunks(
+  audio: &AudioBuffer,
+  max_secs: u32,
+) -> Result<Vec<(f64, Vec<u8>)>, AiError> {
+  let to_ai = |e: phonon_core::PhononError| AiError::Decode(e.to_string());
+  let mono = phonon_core::ensure_channels(audio, 1).map_err(to_ai)?;
+  let mono = phonon_core::resample(&mono, CHUNK_SAMPLE_RATE).map_err(to_ai)?;
+  let max_len = max_secs as usize * CHUNK_SAMPLE_RATE as usize;
+  chunk_ranges(&mono.samples, CHUNK_SAMPLE_RATE, max_len)
+    .into_iter()
+    .map(|(start, end)| {
+      let piece = AudioBuffer {
+        samples: mono.samples[start..end].to_vec(),
+        sample_rate: CHUNK_SAMPLE_RATE,
+        channels: 1,
+      };
+      let bytes = phonon_wav::encode_wav(&piece).map_err(to_ai)?;
+      Ok((start as f64 / CHUNK_SAMPLE_RATE as f64, bytes))
+    })
+    .collect()
+}
+
+/// Append a chunk's transcript to `total`, shifting its times by `offset`
+/// seconds and continuing the segment ids.
+pub(crate) fn append_transcript(total: &mut TranscriptResult, part: TranscriptResult, offset: f64) {
+  let ascii_boundary = total
+    .text
+    .ends_with(|c: char| c.is_ascii_alphanumeric() || c.is_ascii_punctuation())
+    && part.text.starts_with(|c: char| c.is_ascii_alphanumeric());
+  if ascii_boundary {
+    total.text.push(' ');
+  }
+  total.text.push_str(&part.text);
+  total.language = total.language.take().or(part.language);
+  if let Some(duration) = part.duration {
+    total.duration = Some(offset + duration);
+  }
+  let first_id = total.segments.len();
+  total.segments.extend(
+    part
+      .segments
+      .into_iter()
+      .enumerate()
+      .map(|(i, seg)| TranscriptSegment {
+        id: first_id + i,
+        start: seg.start + offset,
+        end: seg.end + offset,
+        text: seg.text,
+      }),
+  );
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -415,6 +501,91 @@ mod tests {
     assert_eq!(resp.segments.len(), 2);
     assert_eq!(resp.segments[0].text, "Hello");
     assert!((resp.segments[1].start - 1.2).abs() < f64::EPSILON);
+  }
+
+  #[test]
+  fn test_append_transcript_offsets_and_joins() {
+    let part = |text: &str, segs: &[(f64, f64, &str)]| TranscriptResult {
+      text: text.to_string(),
+      language: Some("zh".to_string()),
+      duration: segs.last().map(|s| s.1),
+      segments: segs
+        .iter()
+        .enumerate()
+        .map(|(id, &(start, end, text))| TranscriptSegment {
+          id,
+          start,
+          end,
+          text: text.to_string(),
+        })
+        .collect(),
+    };
+    let mut total = TranscriptResult {
+      text: String::new(),
+      language: None,
+      duration: None,
+      segments: vec![],
+    };
+    append_transcript(&mut total, part("你好。", &[(0.5, 1.0, "你好。")]), 0.0);
+    append_transcript(
+      &mut total,
+      part("Hello world.", &[(0.2, 0.9, "Hello"), (1.0, 2.0, "world.")]),
+      29.0,
+    );
+    append_transcript(&mut total, part("Again", &[(0.1, 0.4, "Again")]), 58.0);
+    assert_eq!(total.text, "你好。Hello world. Again");
+    assert_eq!(total.language.as_deref(), Some("zh"));
+    assert_eq!(total.duration, Some(58.4));
+    let summary: Vec<_> = total
+      .segments
+      .iter()
+      .map(|s| (s.id, s.start, s.end))
+      .collect();
+    assert_eq!(
+      summary,
+      [
+        (0, 0.5, 1.0),
+        (1, 29.2, 29.9),
+        (2, 30.0, 31.0),
+        (3, 58.1, 58.4)
+      ]
+    );
+  }
+
+  #[test]
+  fn test_wav_chunks_are_mono_16k_and_bounded() {
+    let stereo = AudioBuffer {
+      samples: vec![0.1; 48_000 * 2 * 5],
+      sample_rate: 48_000,
+      channels: 2,
+    };
+    let chunks = wav_chunks(&stereo, 2).expect("chunks");
+    assert_eq!(chunks.len(), 3);
+    assert_eq!(chunks[0].0, 0.0);
+    let mut total = 0.0;
+    for (offset, bytes) in &chunks {
+      let piece = phonon_io::decode_audio(bytes, "wav").expect("decodes");
+      assert_eq!((piece.sample_rate, piece.channels), (16_000, 1));
+      assert!(piece.duration_secs() <= 2.0);
+      assert!((offset - total).abs() < 1e-9);
+      total += piece.duration_secs();
+    }
+    assert!((total - 5.0).abs() < 0.01, "total {total}");
+  }
+
+  #[test]
+  fn test_chunk_ranges_cut_in_silence() {
+    // 1 kHz rate, 20 ms blocks; tone everywhere except a gap at 800-840.
+    let mut samples = vec![0.5_f32; 2500];
+    samples[800..840].fill(0.0);
+    let ranges = chunk_ranges(&samples, 1000, 1000);
+    let first_cut = ranges[0].1;
+    assert!((800..840).contains(&first_cut), "cut at {first_cut}");
+    assert!(ranges.iter().all(|(a, b)| b - a <= 1000));
+    assert_eq!(ranges.last().map(|r| r.1), Some(2500));
+    assert!(ranges.windows(2).all(|w| w[0].1 == w[1].0));
+    assert_eq!(chunk_ranges(&samples[..900], 1000, 1000), [(0, 900)]);
+    assert_eq!(chunk_ranges(&[], 1000, 1000), [(0, 0)]);
   }
 
   #[test]

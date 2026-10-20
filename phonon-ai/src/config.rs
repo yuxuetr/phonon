@@ -14,7 +14,9 @@
 //! # }
 //! ```
 
-use crate::stt::{SegmentMode, SttProvider, TranscribeOptions, TranscriptResult};
+use crate::stt::{
+  SegmentMode, SttProvider, TranscribeOptions, TranscriptResult, append_transcript, wav_chunks,
+};
 use crate::tts::{TtsProvider, split_text};
 use crate::voice::VoiceConfig;
 use crate::{
@@ -72,6 +74,7 @@ struct SttSection {
   provider: Option<String>,
   model: Option<String>,
   segments: Option<SegmentsSetting>,
+  max_secs: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -135,6 +138,8 @@ struct SttPreset {
   model: &'static str,
   segments: SegmentMode,
   path: &'static str,
+  /// Per-request audio limit in seconds.
+  max_secs: Option<u32>,
 }
 
 struct LlmPreset {
@@ -171,6 +176,7 @@ const PRESETS: &[Preset] = &[
       model: "asr-1.0",
       segments: SegmentMode::VerboseJson,
       path: "speech_to_text",
+      max_secs: None,
     }),
     llm: Some(LlmPreset {
       base_url: MINIMAX,
@@ -197,6 +203,7 @@ const PRESETS: &[Preset] = &[
       model: "qwen-audio-3.0-asr-flash",
       segments: SegmentMode::Always,
       path: "",
+      max_secs: Some(290),
     }),
     llm: Some(LlmPreset {
       base_url: DASHSCOPE_COMPAT,
@@ -222,6 +229,7 @@ const PRESETS: &[Preset] = &[
       model: "glm-asr",
       segments: SegmentMode::Always,
       path: TRANSCRIPTIONS,
+      max_secs: Some(29),
     }),
     llm: Some(LlmPreset {
       base_url: ZHIPU,
@@ -246,6 +254,7 @@ const PRESETS: &[Preset] = &[
       model: "stepaudio-2.5-asr",
       segments: SegmentMode::Unsupported,
       path: TRANSCRIPTIONS,
+      max_secs: None,
     }),
     llm: Some(LlmPreset {
       base_url: STEPFUN,
@@ -281,6 +290,7 @@ const PRESETS: &[Preset] = &[
       model: "whisper-1",
       segments: SegmentMode::VerboseJson,
       path: TRANSCRIPTIONS,
+      max_secs: None,
     }),
     llm: Some(LlmPreset {
       base_url: OPENAI,
@@ -572,6 +582,7 @@ impl Config {
       backend,
       provider: ep.provider,
       model,
+      max_secs: section.max_secs.or(defaults.and_then(|d| d.max_secs)),
     })
   }
 
@@ -782,6 +793,7 @@ pub struct AnyStt {
   backend: SttBackend,
   provider: String,
   model: String,
+  max_secs: Option<u32>,
 }
 
 impl AnyStt {
@@ -794,21 +806,13 @@ impl AnyStt {
   pub fn model(&self) -> &str {
     &self.model
   }
-}
 
-impl SttProvider for AnyStt {
-  async fn transcribe_file(
-    &self,
-    path: &str,
-    options: Option<TranscribeOptions>,
-  ) -> Result<TranscriptResult, AiError> {
-    match &self.backend {
-      SttBackend::OpenAi(p) => p.transcribe_file(path, options).await,
-      SttBackend::Qwen(p) => p.transcribe_file(path, options).await,
-    }
+  /// Per-request audio limit; longer audio is transcribed in chunks.
+  pub fn max_secs(&self) -> Option<u32> {
+    self.max_secs
   }
 
-  async fn transcribe_bytes(
+  async fn transcribe_one(
     &self,
     data: Vec<u8>,
     filename: &str,
@@ -818,6 +822,58 @@ impl SttProvider for AnyStt {
       SttBackend::OpenAi(p) => p.transcribe_bytes(data, filename, options).await,
       SttBackend::Qwen(p) => p.transcribe_bytes(data, filename, options).await,
     }
+  }
+}
+
+impl SttProvider for AnyStt {
+  async fn transcribe_file(
+    &self,
+    path: &str,
+    options: Option<TranscribeOptions>,
+  ) -> Result<TranscriptResult, AiError> {
+    let data = tokio::fs::read(path)
+      .await
+      .map_err(|e| AiError::Io(e.to_string()))?;
+    self.transcribe_bytes(data, path, options).await
+  }
+
+  /// Audio longer than `max_secs` is re-encoded as mono 16 kHz WAV chunks cut
+  /// at quiet points, transcribed in order, and merged with shifted times.
+  /// Audio that cannot be decoded is sent as-is for the provider to judge.
+  async fn transcribe_bytes(
+    &self,
+    data: Vec<u8>,
+    filename: &str,
+    options: Option<TranscribeOptions>,
+  ) -> Result<TranscriptResult, AiError> {
+    let Some(max_secs) = self.max_secs else {
+      return self.transcribe_one(data, filename, options).await;
+    };
+    let extension = Path::new(filename)
+      .extension()
+      .and_then(|e| e.to_str())
+      .unwrap_or("wav");
+    let audio = match phonon_io::decode_audio(&data, extension) {
+      Ok(audio) if audio.duration_secs() > f64::from(max_secs) => audio,
+      Ok(_) => return self.transcribe_one(data, filename, options).await,
+      Err(e) => {
+        tracing::warn!(error = %e, "cannot decode audio to check its length; sending unsplit");
+        return self.transcribe_one(data, filename, options).await;
+      }
+    };
+    let mut total = TranscriptResult {
+      text: String::new(),
+      language: None,
+      duration: None,
+      segments: Vec::new(),
+    };
+    for (offset, chunk) in wav_chunks(&audio, max_secs)? {
+      let part = self
+        .transcribe_one(chunk, "chunk.wav", options.clone())
+        .await?;
+      append_transcript(&mut total, part, offset);
+    }
+    Ok(total)
   }
 }
 
