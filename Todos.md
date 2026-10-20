@@ -141,7 +141,7 @@
 - [x] **G10** Replicate 轮询 / 下载未检查 HTTP 状态码;ElevenLabs `voice_id` 未转义直接拼进 URL
   - DONE: `ensure_success` 用于轮询与下载(下载也走重试);`tts_url` 以单个编码路径段放入 voice_id
 
-## v0.7.3 — 架构项复评
+## v0.7.3 — 架构项复评 ✅
 
 > 对 [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md) 架构 3–6 逐条重新核实(2026-10-20)。
 > 只做有当前证据的项;不做的写明重估条件。

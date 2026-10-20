@@ -3,6 +3,30 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 ---
+## v0.7.3 (unreleased) — architecture re-evaluation
+
+Items H1–H6 in [Todos.md](./Todos.md).
+
+### Bug fixes
+
+- **`CompressorPlugin` ratio is now a dB ratio.** It was applied to the linear overshoot, so
+  4:1 acted like ~3:1 and 20:1 like ~14:1. The plugin now shares `compress()`'s code and
+  matches it sample for sample; **the same settings now compress harder than before.**
+- `LowPassPlugin` / `HighPassPlugin` filter every channel (channels 3+ passed through).
+- `OpenAiScriptGenerator` retries 429 / 5xx like the TTS providers; its errors are
+  `PodcastError::Script` instead of `PodcastError::Tts`.
+
+### Added
+
+- `phonon_io::decode_audio(bytes, extension)` decodes in memory; providers and the server
+  use it instead of a temp file each.
+- `phonon_ai::retry_transient`, `HttpClient::with_client`, `OpenAiScriptGenerator::with_client`.
+
+### Internal
+
+- `filters::filter()` is a one-band `ParametricEq` (bit-identical output).
+- phonon-ai's `tempfile` and phonon-cli's `phonon-wav` dependencies removed.
+
 ## v0.7.2 (unreleased) — evaluation backlog
 
 Items G1–G10 in [Todos.md](./Todos.md); see `git log` for individual commits.

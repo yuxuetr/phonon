@@ -25,6 +25,9 @@ MP3, OGG, and AAC encoders use streaming I/O (`BufWriter<File>`) to keep memory 
 // Read any supported format
 let buffer = phonon_io::read_audio("song.mp3")?;
 
+// Decode bytes already in memory (e.g. an HTTP body); the extension hints the format
+let buffer = phonon_io::decode_audio(&bytes, "mp3")?;
+
 // Write — format determined by extension
 phonon_io::write_audio("output.wav", &buffer)?;
 phonon_io::write_audio("output.mp3", &buffer)?;

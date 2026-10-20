@@ -28,6 +28,7 @@
 - **v0.7.1**: 评估修复(安全 / 结果正确性 / 实时安全 / 抽象收敛),见 [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md)
 - **v0.7.2**: 评估遗留(阻塞工作移出 async / UI 线程、provider 重试与超时、引擎实时安全、
   真峰值相位、AAC 尾部、FLAC 回读、Edge TTS 恢复可用)
+- **v0.7.3**: 架构复评(压缩器插件 ratio 改为 dB 域、滤波插件全声道、内存解码 `decode_audio`、脚本生成重试)
 
 ## v0.7 计划 — AI 播客生产就绪 + MCP 暴露
 

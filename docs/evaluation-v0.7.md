@@ -4,7 +4,8 @@
 **范围**: workspace 全部 14 个 crate、文档、CI、发布准备
 **任务清单**: 见 [Todos.md](../Todos.md) 的 v0.7.1 段
 **状态**: P0 / P1 / P2、架构 1–2 及架构 5 中的未用依赖已在 v0.7.1(F1–F15)与 v0.7.2(G1–G10)处理;
-架构 3–4(DSP / 读写重复)、5 中 podcast 内置的 OpenAI chat 客户端、6(RPITIT)暂未改。
+架构 3–6 于 v0.7.3(H1–H6)复评:压缩器插件、滤波插件声道、字节解码副本、`filter()` 副本、
+脚本生成重试已处理;lufs biquad、phonon-wav 合并、RPITIT 保留,重估条件见 Todos.md。
 
 ## 结论
 

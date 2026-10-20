@@ -390,6 +390,7 @@ shows full drag-and-drop + WebAudio playback.
 | Task | API |
 |---|---|
 | Read any format | `phonon_io::read_audio(path)` |
+| Decode in-memory bytes | `phonon_io::decode_audio(&bytes, "mp3")` |
 | Write any format (extension-routed) | `phonon_io::write_audio(path, &buf)` |
 | Direct 16-bit PCM WAV write | `phonon_wav::write_wav(path, &buf)` |
 | Loudness-normalize for podcasts | `phonon_core::normalize_lufs(&mut buf, -16.0, -1.0)` |
