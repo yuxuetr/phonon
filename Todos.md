@@ -146,8 +146,9 @@
 > 对 [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md) 架构 3–6 逐条重新核实(2026-10-20)。
 > 只做有当前证据的项;不做的写明重估条件。
 
-- [ ] **H1** 压缩器插件的 `ratio` 在线性幅度域计算,不是压缩比(阈值 0.5、ratio 20、输入 1.0 → 输出高出阈值 0.42 dB,实际约 14:1;ratio 4 实际约 3:1),与 `compress()` 的 dB 域结果不一致
+- [x] **H1** 压缩器插件的 `ratio` 在线性幅度域计算,不是压缩比(阈值 0.5、ratio 20、输入 1.0 → 输出高出阈值 0.42 dB,实际约 14:1;ratio 4 实际约 3:1),与 `compress()` 的 dB 域结果不一致
   - 做法:`compress()` 与 `CompressorPlugin` 共用 compressor.rs 中同一个逐帧增益计算;插件参数不变(threshold 仍为 0–1 线性,内部换算 dB)
+  - DONE: 共用 `compress_frames`;0.25/4:1 稳态输出 −7.18 dB → −9.03 dB,插件与 `compress()` 逐样本一致(e43457d)。同样参数下插件压得比以前重
 - [ ] **H2** `LowPassPlugin` / `HighPassPlugin` 状态固定 2 声道,第 3 声道起原样通过
   - 做法:状态按声道数分配,格式变化时重置
 - [ ] **H3** 字节解码五份复制(4 个 TTS provider + Replicate + server),每份都先写临时文件再读
