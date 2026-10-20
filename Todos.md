@@ -101,7 +101,7 @@
 ### P1 — 结果错误
 - [x] **F4** 管线:BGM 为空死循环;章节/SRT 计入 intro 与 crossfade ✅
 - [x] **F5** Whisper `TranscribeOptions::default()` 默认开启 timestamps ✅
-- [ ] **F6** 重采样降采样时核支撑按 ratio 扩展
+- [x] **F6** 重采样降采样时核支撑按 ratio 扩展 ✅ (10 kHz@48→16k 泄漏 -26 → -64 dB)
 - [ ] **F7** SIMD 在非 x86_64/aarch64 架构的标量 fallback
 - [ ] **F8** 压缩器(compressor + CompressorPlugin)按帧计算时间常数
 - [ ] **F9** `channels == 0` 防护:相关算法返回错误;`read_audio` 无解码数据时报错
