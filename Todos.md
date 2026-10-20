@@ -94,7 +94,7 @@
 > 来源:[docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md)。每项一个 commit,先写能红的测试再修。
 
 ### P0 — 安全与 CI
-- [ ] **F1** CI 转绿:修 clippy `-D warnings` 错误;`.cargo/config.toml` 移出版本库
+- [x] **F1** CI 转绿:修 clippy `-D warnings` 错误;`.cargo/config.toml` 移出版本库 ✅ (另加 CI doctest 步骤)
 - [ ] **F2** Server 加固:默认绑定 127.0.0.1、CORS 收紧、拒绝请求体内的文件路径资源、参数上界 + `validate()`、显式 body limit、去掉 `expect`
 - [ ] **F3** MCP 路径沙箱:`PHONON_MCP_ROOT` 限定 load/save 根目录;registry 去掉 `expect`
 
