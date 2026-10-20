@@ -5,7 +5,6 @@ use crate::script::PodcastScript;
 use phonon_ai::{AiError, SoundGenProvider, SoundPrompt, TtsProvider};
 use phonon_core::{self, AudioBuffer};
 use std::path::Path;
-use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::{info, instrument};
 
@@ -79,80 +78,7 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
 
     info!("Starting podcast generation");
 
-    // Step 1: Synthesize all segments concurrently
-    let concurrency = config.tts_concurrency.max(1);
-
-    // Collect owned (index, text, voice) tuples up front so we can synthesize concurrently.
-    // If a segment has a language override, clone the speaker's voice config and apply it.
-    let synthesis_items: Vec<_> = script
-      .segments
-      .iter()
-      .enumerate()
-      .map(|(i, segment)| {
-        let voice = script
-          .speakers
-          .get(&segment.speaker)
-          .ok_or_else(|| PodcastError::Script(format!("Unknown speaker: {}", segment.speaker)))
-          .cloned()
-          .map(|mut v| {
-            // Apply segment-level language override if specified
-            if let Some(ref lang) = segment.language {
-              v.language = Some(lang.clone());
-            }
-            v
-          });
-        (i, segment.text.clone(), segment.speaker.clone(), voice)
-      })
-      .collect();
-
-    // Validate all speakers before starting any synthesis.
-    for (_, _, _, voice_result) in &synthesis_items {
-      if let Err(e) = voice_result {
-        return Err(PodcastError::Script(e.to_string()));
-      }
-    }
-
-    info!(
-      segments = synthesis_items.len(),
-      concurrency, "Starting concurrent TTS synthesis"
-    );
-
-    let semaphore = Arc::new(Semaphore::new(concurrency));
-    let tts = &self.tts;
-
-    let futures: Vec<_> = synthesis_items
-      .into_iter()
-      .map(|(i, text, speaker, voice_result)| {
-        let sem = semaphore.clone();
-        async move {
-          // Safety: we validated all voices above, so this won't fail.
-          let voice = voice_result.map_err(|e| PodcastError::Script(e.to_string()))?;
-
-          let _permit = sem
-            .acquire()
-            .await
-            .map_err(|e| PodcastError::Processing(format!("Semaphore error: {e}")))?;
-
-          info!(segment = i, speaker = %speaker, "Synthesizing segment");
-
-          let buffer = tts
-            .synthesize(&text, &voice)
-            .await
-            .map_err(|e| PodcastError::Tts(e.to_string()))?;
-
-          Ok::<AudioBuffer, PodcastError>(buffer)
-        }
-      })
-      .collect();
-
-    let results = futures::future::join_all(futures).await;
-    let mut segment_buffers = Vec::with_capacity(results.len());
-    for result in results {
-      segment_buffers.push(result?);
-    }
-
-    info!(count = segment_buffers.len(), "All segments synthesized");
-
+    let segment_buffers = self.synthesize_segments(script).await?;
     let assets = self.resolve_assets(config).await?;
     let (assembled, _spans) = render_off_runtime(segment_buffers, assets, config.clone()).await?;
 
@@ -170,26 +96,9 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
   /// empty `tags`; populate them via [`Episode::with_tags`] before export.
   #[instrument(skip(self, script), fields(title = %script.title))]
   pub async fn generate_episode(&self, script: &PodcastScript) -> Result<Episode, PodcastError> {
-    // Synthesize each segment one-by-one. (Concurrent variant is harder
-    // to reconcile with per-segment timing in the same pass; for now
-    // generate_episode trades concurrency for accurate chapter timing.)
-    let mut raw_buffers = Vec::with_capacity(script.segments.len());
-    for segment in &script.segments {
-      let mut voice = script
-        .speakers
-        .get(&segment.speaker)
-        .ok_or_else(|| PodcastError::Script(format!("Unknown speaker: {}", segment.speaker)))?
-        .clone();
-      if let Some(ref lang) = segment.language {
-        voice.language = Some(lang.clone());
-      }
-      let buf = self
-        .tts
-        .synthesize(&segment.text, &voice)
-        .await
-        .map_err(|e| PodcastError::Tts(e.to_string()))?;
-      raw_buffers.push(buf);
-    }
+    // Segment order is kept, so the spans measured during assembly line
+    // up with the script even though synthesis runs concurrently.
+    let raw_buffers = self.synthesize_segments(script).await?;
 
     let assets = self.resolve_assets(&script.config).await?;
     let (assembled, spans) = render_off_runtime(raw_buffers, assets, script.config.clone()).await?;
@@ -246,6 +155,53 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
       .map_err(|e| PodcastError::Tts(e.to_string()))?;
 
     Ok(buffer)
+  }
+
+  /// Synthesize every segment, at most `config.tts_concurrency` at a
+  /// time, returning the buffers in script order.
+  async fn synthesize_segments(
+    &self,
+    script: &PodcastScript,
+  ) -> Result<Vec<AudioBuffer>, PodcastError> {
+    // Resolve every voice (with segment-level language overrides) before
+    // starting any synthesis, so an unknown speaker fails fast.
+    let mut items = Vec::with_capacity(script.segments.len());
+    for (i, segment) in script.segments.iter().enumerate() {
+      let mut voice = script
+        .speakers
+        .get(&segment.speaker)
+        .ok_or_else(|| PodcastError::Script(format!("Unknown speaker: {}", segment.speaker)))?
+        .clone();
+      if let Some(ref lang) = segment.language {
+        voice.language = Some(lang.clone());
+      }
+      items.push((i, segment, voice));
+    }
+
+    let concurrency = script.config.tts_concurrency.max(1);
+    info!(
+      segments = items.len(),
+      concurrency, "Starting concurrent TTS synthesis"
+    );
+
+    let semaphore = Semaphore::new(concurrency);
+    let semaphore = &semaphore;
+    let tts = &self.tts;
+    let futures = items.into_iter().map(|(i, segment, voice)| async move {
+      let _permit = semaphore
+        .acquire()
+        .await
+        .map_err(|e| PodcastError::Processing(format!("Semaphore error: {e}")))?;
+      info!(segment = i, speaker = %segment.speaker, "Synthesizing segment");
+      tts
+        .synthesize(&segment.text, &voice)
+        .await
+        .map_err(|e| PodcastError::Tts(e.to_string()))
+    });
+
+    let buffers = futures::future::try_join_all(futures).await?;
+    info!(count = buffers.len(), "All segments synthesized");
+    Ok(buffers)
   }
 
   /// Load or generate the configured intro / outro / BGM, still in their
@@ -387,7 +343,8 @@ fn post_process_segments(
 /// Assemble segments with silence pauses or crossfades between them.
 ///
 /// Also returns each segment's `(start, end)` in seconds within the
-/// assembled track.
+/// assembled track. Everything is appended into one pre-sized buffer, so
+/// assembly is linear in the output length.
 fn assemble_segments(
   segments: Vec<AudioBuffer>,
   config: &PipelineConfig,
@@ -400,48 +357,61 @@ fn assemble_segments(
 
   let target_rate = config.output_sample_rate;
   let target_channels = config.output_channels;
-  let pause_secs = config.pause_between_segments_secs;
-  let crossfade_secs = config.crossfade_secs;
-
   let samples_per_sec = target_rate as f64 * target_channels as f64;
+
+  let pause = if config.pause_between_segments_secs > 0.0 {
+    phonon_core::silence(
+      config.pause_between_segments_secs,
+      target_rate,
+      target_channels,
+    )
+    .map_err(|e| PodcastError::Processing(format!("Generate pause: {}", e)))?
+    .samples
+  } else {
+    Vec::new()
+  };
+  // Same length rule as `phonon_core::crossfade`: whole frames only.
+  let ch = target_channels.max(1) as usize;
+  let fade_len = if config.crossfade_secs > 0.0 {
+    let len = (config.crossfade_secs * samples_per_sec) as usize;
+    len - len % ch
+  } else {
+    0
+  };
+
+  let capacity =
+    segments.iter().map(|s| s.samples.len()).sum::<usize>() + pause.len() * (segments.len() - 1);
+  let mut out: Vec<f32> = Vec::with_capacity(capacity);
   let mut spans = Vec::with_capacity(segments.len());
 
-  let mut iter = segments.into_iter();
-  let mut result = iter
-    .next()
-    .ok_or_else(|| PodcastError::Processing("No segments".to_string()))?;
-  spans.push((0.0, result.samples.len() as f64 / samples_per_sec));
-
-  for next_segment in iter {
-    let next_len = next_segment.samples.len();
-
-    // Insert pause between segments (if configured)
-    if pause_secs > 0.0 {
-      let pause = phonon_core::silence(pause_secs, target_rate, target_channels)
-        .map_err(|e| PodcastError::Processing(format!("Generate pause: {}", e)))?;
-      result = phonon_core::merge(&[result, pause])
-        .map_err(|e| PodcastError::Processing(format!("Merge pause: {}", e)))?;
+  for (i, segment) in segments.iter().enumerate() {
+    let next = &segment.samples;
+    let mut overlap = 0;
+    if i > 0 {
+      out.extend_from_slice(&pause);
+      // Linear crossfade of the track's tail (the pause, if any) into the
+      // head of the next segment, as in `phonon_core::crossfade`.
+      overlap = fade_len.min(out.len()).min(next.len());
+      let start = out.len() - overlap;
+      for (j, (o, &n)) in out[start..].iter_mut().zip(next.iter()).enumerate() {
+        let t = j as f32 / overlap as f32;
+        *o = (*o * (1.0 - t) + n * t).clamp(-1.0, 1.0);
+      }
     }
-
-    // Append the next segment (with optional crossfade)
-    if crossfade_secs > 0.0 {
-      result = phonon_core::crossfade(&result, &next_segment, crossfade_secs)
-        .map_err(|e| PodcastError::Processing(format!("Crossfade: {}", e)))?;
-    } else {
-      result = phonon_core::merge(&[result, next_segment])
-        .map_err(|e| PodcastError::Processing(format!("Merge segment: {}", e)))?;
-    }
-
-    // Both merge and crossfade end with the full next segment, so its
-    // start is wherever its last sample count begins.
-    let end = result.samples.len();
+    let start = out.len() - overlap;
+    out.extend_from_slice(&next[overlap..]);
     spans.push((
-      (end - next_len) as f64 / samples_per_sec,
-      end as f64 / samples_per_sec,
+      start as f64 / samples_per_sec,
+      out.len() as f64 / samples_per_sec,
     ));
   }
 
-  Ok((result, spans))
+  let assembled = AudioBuffer {
+    samples: out,
+    sample_rate: target_rate,
+    channels: target_channels,
+  };
+  Ok((assembled, spans))
 }
 
 /// Resample + channel-convert an already-loaded buffer to the target.
@@ -553,6 +523,123 @@ mod tests {
         channels: 1,
       })
     }
+  }
+
+  /// The quadratic merge/crossfade assembly this module used to do;
+  /// `assemble_segments` must produce the same samples and spans.
+  fn reference_assembly(
+    segments: &[AudioBuffer],
+    config: &PipelineConfig,
+  ) -> (Vec<f32>, Vec<(f64, f64)>) {
+    let sps = config.output_sample_rate as f64 * config.output_channels as f64;
+    let mut result = segments[0].clone();
+    let mut spans = vec![(0.0, result.samples.len() as f64 / sps)];
+    for next in &segments[1..] {
+      if config.pause_between_segments_secs > 0.0 {
+        let pause = phonon_core::silence(
+          config.pause_between_segments_secs,
+          config.output_sample_rate,
+          config.output_channels,
+        )
+        .unwrap();
+        result = phonon_core::merge(&[result, pause]).unwrap();
+      }
+      result = if config.crossfade_secs > 0.0 {
+        phonon_core::crossfade(&result, next, config.crossfade_secs).unwrap()
+      } else {
+        phonon_core::merge(&[result, next.clone()]).unwrap()
+      };
+      let end = result.samples.len();
+      spans.push(((end - next.samples.len()) as f64 / sps, end as f64 / sps));
+    }
+    (result.samples, spans)
+  }
+
+  #[test]
+  fn test_assembly_matches_merge_and_crossfade_reference() {
+    let segments: Vec<AudioBuffer> = [900usize, 40, 1_500, 700]
+      .iter()
+      .enumerate()
+      .map(|(k, &frames)| AudioBuffer {
+        samples: (0..frames * 2)
+          .map(|i| ((i + k * 7) as f32 * 0.013).sin() * 0.8)
+          .collect(),
+        sample_rate: 8_000,
+        channels: 2,
+      })
+      .collect();
+
+    for (pause, fade) in [(0.0, 0.0), (0.05, 0.0), (0.0, 0.03), (0.02, 0.03)] {
+      let config = PipelineConfig {
+        output_sample_rate: 8_000,
+        output_channels: 2,
+        pause_between_segments_secs: pause,
+        crossfade_secs: fade,
+        ..Default::default()
+      };
+
+      let (expected, expected_spans) = reference_assembly(&segments, &config);
+      let (got, spans) = assemble_segments(segments.clone(), &config).unwrap();
+      assert_eq!(
+        got.samples.len(),
+        expected.len(),
+        "pause={pause} fade={fade}"
+      );
+      for (a, b) in got.samples.iter().zip(&expected) {
+        assert!(
+          (a - b).abs() < 1e-6,
+          "pause={pause} fade={fade}: {a} vs {b}"
+        );
+      }
+      assert_eq!(spans, expected_spans, "pause={pause} fade={fade}");
+    }
+  }
+
+  /// Records the peak number of overlapping `synthesize` calls.
+  struct ConcurrencyProbeTts {
+    in_flight: AtomicUsize,
+    peak: AtomicUsize,
+  }
+
+  impl TtsProvider for ConcurrencyProbeTts {
+    async fn synthesize(&self, _text: &str, _voice: &VoiceConfig) -> Result<AudioBuffer, AiError> {
+      let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+      self.peak.fetch_max(now, Ordering::SeqCst);
+      tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+      self.in_flight.fetch_sub(1, Ordering::SeqCst);
+      Ok(AudioBuffer {
+        samples: vec![0.1; 4_410],
+        sample_rate: 44_100,
+        channels: 1,
+      })
+    }
+  }
+
+  #[tokio::test]
+  async fn test_generate_episode_synthesizes_concurrently() {
+    let json = r#"{
+      "title": "Concurrent",
+      "speakers": { "host": { "voice_id": "alloy" } },
+      "segments": [
+        { "speaker": "host", "text": "one" },
+        { "speaker": "host", "text": "two" },
+        { "speaker": "host", "text": "three" },
+        { "speaker": "host", "text": "four" }
+      ],
+      "config": { "tts_concurrency": 3 }
+    }"#;
+    let script = PodcastScript::from_json(json).unwrap();
+    let pipeline = PodcastPipeline::new(ConcurrencyProbeTts {
+      in_flight: AtomicUsize::new(0),
+      peak: AtomicUsize::new(0),
+    });
+    let episode = pipeline.generate_episode(&script).await.unwrap();
+    assert!(!episode.audio.samples.is_empty());
+    let peak = pipeline.tts.peak.load(Ordering::SeqCst);
+    assert_eq!(
+      peak, 3,
+      "expected tts_concurrency-bounded overlap, got {peak}"
+    );
   }
 
   /// Sound generator that returns a zero-length buffer.
