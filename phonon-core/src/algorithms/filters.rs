@@ -1,3 +1,4 @@
+use crate::algorithms::eq::{EqBand, ParametricEq};
 use crate::{AudioBuffer, Result};
 use std::f64::consts::PI;
 
@@ -47,46 +48,8 @@ pub fn filter(
     return Ok(());
   }
 
-  let sample_rate = buffer.sample_rate as f64;
-  let coeffs = calculate_coefficients(filter_type, cutoff_hz, sample_rate, q_value, gain_db);
-
-  // Apply filter per channel
-  // Since channels are interleaved, we need state for each channel.
-  let channels = buffer.channels as usize;
-  if channels == 0 {
-    return Ok(());
-  }
-
-  let mut x1 = vec![0.0; channels]; // x[n-1]
-  let mut x2 = vec![0.0; channels]; // x[n-2]
-  let mut y1 = vec![0.0; channels]; // y[n-1]
-  let mut y2 = vec![0.0; channels]; // y[n-2]
-
-  let b0 = coeffs.b0;
-  let b1 = coeffs.b1;
-  let b2 = coeffs.b2;
-  let a1 = coeffs.a1;
-  let a2 = coeffs.a2;
-
-  for i in 0..(buffer.samples.len() / channels) {
-    for ch in 0..channels {
-      let idx = i * channels + ch;
-      let x0 = buffer.samples[idx] as f64;
-
-      // Direct Form I difference equation:
-      // y[n] = b0*x[n] + b1*x[n-1] + b2*x[n-2] - a1*y[n-1] - a2*y[n-2]
-      let y0 = b0 * x0 + b1 * x1[ch] + b2 * x2[ch] - a1 * y1[ch] - a2 * y2[ch];
-
-      // Update states
-      x2[ch] = x1[ch];
-      x1[ch] = x0;
-      y2[ch] = y1[ch];
-      y1[ch] = y0;
-
-      buffer.samples[idx] = y0 as f32;
-    }
-  }
-
+  let band = EqBand::new(filter_type, cutoff_hz, q_value, gain_db);
+  ParametricEq::new(vec![band], buffer.sample_rate, buffer.channels).process(&mut buffer.samples);
   Ok(())
 }
 
