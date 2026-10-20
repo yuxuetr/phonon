@@ -186,43 +186,35 @@ impl Episode {
   }
 }
 
-/// Build chapters + SRT from a script and per-segment durations.
+/// Build chapters + SRT from a script and per-segment `(start, end)` times
+/// in seconds within the final audio.
 ///
 /// Used internally by [`crate::PodcastPipeline::generate_episode`] but
 /// exposed so callers can re-create episode metadata from a known timing
 /// table (e.g. when re-rendering only a subset of segments).
 pub fn build_episode_metadata(
   script: &PodcastScript,
-  segment_durations: &[f64],
-  pause_secs: f64,
+  segment_spans: &[(f64, f64)],
 ) -> (Vec<Chapter>, String) {
-  let chapters = assign_chapter_times(script, segment_durations, pause_secs);
-  let entries = entries_from_script(script, segment_durations, pause_secs);
+  let chapters = assign_chapter_times(script, segment_spans);
+  let entries = entries_from_script(script, segment_spans);
   let srt = generate_srt(&entries);
   (chapters, srt)
 }
 
-/// Convert a script + segment durations into per-segment SRT entries.
-fn entries_from_script(
-  script: &PodcastScript,
-  segment_durations: &[f64],
-  pause_secs: f64,
-) -> Vec<SubtitleEntry> {
-  let mut out = Vec::with_capacity(script.segments.len());
-  let mut t = 0.0;
-  for (i, seg) in script.segments.iter().enumerate() {
-    let dur = segment_durations.get(i).copied().unwrap_or(0.0);
-    out.push(SubtitleEntry {
-      start: t,
-      end: t + dur,
+/// Convert a script + segment spans into per-segment SRT entries.
+/// Segments without a span are skipped.
+fn entries_from_script(script: &PodcastScript, segment_spans: &[(f64, f64)]) -> Vec<SubtitleEntry> {
+  script
+    .segments
+    .iter()
+    .zip(segment_spans)
+    .map(|(seg, &(start, end))| SubtitleEntry {
+      start,
+      end,
       text: seg.text.clone(),
-    });
-    t += dur;
-    if i + 1 < script.segments.len() {
-      t += pause_secs;
-    }
-  }
-  out
+    })
+    .collect()
 }
 
 #[cfg(test)]
@@ -268,7 +260,7 @@ mod tests {
   #[test]
   fn test_build_episode_metadata_chapters_match_speakers() {
     let script = make_script();
-    let (chapters, _srt) = build_episode_metadata(&script, &[2.0, 3.0], 0.5);
+    let (chapters, _srt) = build_episode_metadata(&script, &[(0.0, 2.0), (2.5, 5.5)]);
     assert_eq!(chapters.len(), 2);
     assert_eq!(chapters[0].title, "alice");
     assert_eq!(chapters[1].title, "bob");
@@ -281,7 +273,7 @@ mod tests {
   #[test]
   fn test_build_episode_metadata_srt_contains_segments() {
     let script = make_script();
-    let (_, srt) = build_episode_metadata(&script, &[2.0, 3.0], 0.5);
+    let (_, srt) = build_episode_metadata(&script, &[(0.0, 2.0), (2.5, 5.5)]);
     assert!(srt.contains("Welcome"));
     assert!(srt.contains("Thanks"));
     assert!(srt.contains("00:00:00,000"));

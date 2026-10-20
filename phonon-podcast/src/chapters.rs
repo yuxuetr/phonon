@@ -211,49 +211,29 @@ pub fn chapters_from_speakers(script: &PodcastScript) -> Vec<Chapter> {
   chapters
 }
 
-/// Assign actual timestamps to speaker-based chapters given per-segment durations.
+/// Assign actual timestamps to speaker-based chapters given per-segment
+/// `(start, end)` times in seconds.
 ///
-/// `segment_durations` should have one entry per segment in the script (in seconds).
-/// Chapters are computed by accumulating durations and detecting speaker switches.
-pub fn assign_chapter_times(
-  script: &PodcastScript,
-  segment_durations: &[f64],
-  pause_secs: f64,
-) -> Vec<Chapter> {
-  if script.segments.is_empty() {
-    return vec![];
-  }
-
+/// `segment_spans` should have one entry per segment in the script; segments
+/// without a span are ignored. A chapter starts at its speaker's first
+/// segment and ends where the next speaker starts (so the pause before a
+/// speaker change belongs to the earlier chapter), or at the last segment's end.
+pub fn assign_chapter_times(script: &PodcastScript, segment_spans: &[(f64, f64)]) -> Vec<Chapter> {
   let mut chapters: Vec<Chapter> = Vec::new();
-  let mut current_time = 0.0;
   let mut current_speaker: Option<&str> = None;
 
-  for (i, seg) in script.segments.iter().enumerate() {
-    let duration = segment_durations.get(i).copied().unwrap_or(0.0);
-
-    match current_speaker {
-      Some(prev) if prev == seg.speaker => {
-        // Same speaker — extend current chapter
+  for (seg, &(start, _)) in script.segments.iter().zip(segment_spans) {
+    if current_speaker != Some(seg.speaker.as_str()) {
+      if let Some(last) = chapters.last_mut() {
+        last.end = Some(start);
       }
-      _ => {
-        // Close previous chapter
-        if let Some(last) = chapters.last_mut() {
-          last.end = Some(current_time);
-        }
-        chapters.push(Chapter::new(&seg.speaker, current_time));
-        current_speaker = Some(&seg.speaker);
-      }
-    }
-
-    current_time += duration;
-    if i + 1 < script.segments.len() {
-      current_time += pause_secs;
+      chapters.push(Chapter::new(&seg.speaker, start));
+      current_speaker = Some(&seg.speaker);
     }
   }
 
-  // Close last chapter
-  if let Some(last) = chapters.last_mut() {
-    last.end = Some(current_time);
+  if let (Some(last), Some(&(_, end))) = (chapters.last_mut(), segment_spans.last()) {
+    last.end = Some(end);
   }
 
   chapters
@@ -470,8 +450,9 @@ mod tests {
       ("Bob", "Hi there"),     // 3.0s
       ("Alice", "Continuing"), // 1.5s
     ]);
-    let durations = [2.0, 3.0, 1.5];
-    let chapters = assign_chapter_times(&script, &durations, 0.5);
+    // 0.5 s pauses between segments.
+    let spans = [(0.0, 2.0), (2.5, 5.5), (6.0, 7.5)];
+    let chapters = assign_chapter_times(&script, &spans);
 
     assert_eq!(chapters.len(), 3);
 
@@ -495,8 +476,8 @@ mod tests {
       ("Alice", "Part 2"), // 1.0s
       ("Bob", "Response"), // 3.0s
     ]);
-    let durations = [2.0, 1.0, 3.0];
-    let chapters = assign_chapter_times(&script, &durations, 0.5);
+    let spans = [(0.0, 2.0), (2.5, 3.5), (4.0, 7.0)];
+    let chapters = assign_chapter_times(&script, &spans);
 
     assert_eq!(chapters.len(), 2); // Alice merged
     assert_eq!(chapters[0].title, "Alice");

@@ -158,10 +158,10 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
       self.post_process_segments(segment_buffers, target_rate, target_channels)?;
 
     // Step 3: Assemble segments with pauses/crossfades
-    let mut assembled = self.assemble_segments(segment_buffers, config)?;
+    let (assembled, _spans) = self.assemble_segments(segment_buffers, config)?;
 
     // Step 4: Add intro/outro
-    assembled = self
+    let (mut assembled, _intro_secs) = self
       .add_intro_outro(assembled, config, target_rate, target_channels)
       .await?;
 
@@ -222,14 +222,16 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
     // Resample / channel-convert / per-segment normalize.
     let processed = self.post_process_segments(raw_buffers, target_rate, target_channels)?;
 
-    // Capture durations *after* post-processing — these are what the
-    // listener will hear, so chapter / SRT timing must use them.
-    let segment_durations: Vec<f64> = processed.iter().map(|b| b.duration_secs()).collect();
-
-    let mut assembled = self.assemble_segments(processed, config)?;
-    assembled = self
+    // Segment spans are measured during assembly (so pauses and crossfade
+    // overlaps are exact), then shifted by the intro that precedes them.
+    let (assembled, spans) = self.assemble_segments(processed, config)?;
+    let (mut assembled, intro_secs) = self
       .add_intro_outro(assembled, config, target_rate, target_channels)
       .await?;
+    let spans: Vec<(f64, f64)> = spans
+      .into_iter()
+      .map(|(start, end)| (start + intro_secs, end + intro_secs))
+      .collect();
     assembled = self
       .mix_bgm(assembled, config, target_rate, target_channels)
       .await?;
@@ -242,11 +244,7 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
       phonon_core::fade_out(&mut assembled, config.fade_out_secs);
     }
 
-    let (chapters, srt) = build_episode_metadata(
-      script,
-      &segment_durations,
-      config.pause_between_segments_secs,
-    );
+    let (chapters, srt) = build_episode_metadata(script, &spans);
     let episode = Episode::new(assembled)
       .with_chapters(chapters)
       .with_srt(srt);
@@ -328,11 +326,14 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
   }
 
   /// Assemble segments with silence pauses or crossfades between them.
+  ///
+  /// Also returns each segment's `(start, end)` in seconds within the
+  /// assembled track.
   fn assemble_segments(
     &self,
     segments: Vec<AudioBuffer>,
     config: &PipelineConfig,
-  ) -> Result<AudioBuffer, PodcastError> {
+  ) -> Result<(AudioBuffer, Vec<(f64, f64)>), PodcastError> {
     if segments.is_empty() {
       return Err(PodcastError::Processing(
         "No segments to assemble".to_string(),
@@ -344,12 +345,18 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
     let pause_secs = config.pause_between_segments_secs;
     let crossfade_secs = config.crossfade_secs;
 
+    let samples_per_sec = target_rate as f64 * target_channels as f64;
+    let mut spans = Vec::with_capacity(segments.len());
+
     let mut iter = segments.into_iter();
     let mut result = iter
       .next()
       .ok_or_else(|| PodcastError::Processing("No segments".to_string()))?;
+    spans.push((0.0, result.samples.len() as f64 / samples_per_sec));
 
     for next_segment in iter {
+      let next_len = next_segment.samples.len();
+
       // Insert pause between segments (if configured)
       if pause_secs > 0.0 {
         let pause = phonon_core::silence(pause_secs, target_rate, target_channels)
@@ -366,9 +373,17 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
         result = phonon_core::merge(&[result, next_segment])
           .map_err(|e| PodcastError::Processing(format!("Merge segment: {}", e)))?;
       }
+
+      // Both merge and crossfade end with the full next segment, so its
+      // start is wherever its last sample count begins.
+      let end = result.samples.len();
+      spans.push((
+        (end - next_len) as f64 / samples_per_sec,
+        end as f64 / samples_per_sec,
+      ));
     }
 
-    Ok(result)
+    Ok((result, spans))
   }
 
   /// Resample + channel-convert an already-loaded buffer to the target.
@@ -409,18 +424,21 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
     self.convert_to_target(raw, target_rate, target_channels)
   }
 
-  /// Add intro/outro audio to the assembled track.
+  /// Add intro/outro audio to the assembled track. Also returns the
+  /// intro duration in seconds (0 without an intro).
   async fn add_intro_outro(
     &self,
     mut main: AudioBuffer,
     config: &PipelineConfig,
     target_rate: u32,
     target_channels: u16,
-  ) -> Result<AudioBuffer, PodcastError> {
+  ) -> Result<(AudioBuffer, f64), PodcastError> {
+    let mut intro_secs = 0.0;
     if let Some(intro_source) = config.effective_intro() {
       let intro = self
         .resolve_asset(&intro_source, target_rate, target_channels)
         .await?;
+      intro_secs = intro.duration_secs();
       main = phonon_core::merge(&[intro, main])
         .map_err(|e| PodcastError::Processing(format!("Merge intro: {}", e)))?;
     }
@@ -433,7 +451,7 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
         .map_err(|e| PodcastError::Processing(format!("Merge outro: {}", e)))?;
     }
 
-    Ok(main)
+    Ok((main, intro_secs))
   }
 
   /// Mix background music with the main track. Loops or trims to length.
@@ -451,6 +469,11 @@ impl<T: TtsProvider, S: SoundGenProvider> PodcastPipeline<T, S> {
     let mut bgm = self
       .resolve_asset(&bgm_source, target_rate, target_channels)
       .await?;
+    if bgm.samples.is_empty() {
+      return Err(PodcastError::Processing(
+        "BGM asset is empty — nothing to loop under the main track".to_string(),
+      ));
+    }
 
     // Lower BGM volume
     phonon_core::adjust_volume(&mut bgm, config.bgm_volume);
@@ -534,6 +557,94 @@ mod tests {
         channels: 1,
       })
     }
+  }
+
+  /// Sound generator that returns a zero-length buffer.
+  struct EmptySoundGen;
+
+  impl SoundGenProvider for EmptySoundGen {
+    async fn generate(&self, _prompt: &SoundPrompt) -> Result<AudioBuffer, AiError> {
+      Ok(AudioBuffer {
+        samples: vec![],
+        sample_rate: 44100,
+        channels: 1,
+      })
+    }
+  }
+
+  #[test]
+  fn test_pipeline_empty_bgm_errors_instead_of_hanging() {
+    let json = r#"{
+      "title": "Empty BGM",
+      "speakers": { "host": { "voice_id": "alloy" } },
+      "segments": [{ "speaker": "host", "text": "Hello there" }],
+      "config": { "bgm": { "kind": "generated", "prompt": { "prompt": "silence" } } }
+    }"#;
+    let script = PodcastScript::from_json(json).unwrap();
+
+    // Run on a separate thread so a regression (infinite loop) fails the
+    // test via the timeout instead of hanging the whole test binary.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+      let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+      let pipeline = PodcastPipeline::new(MockTts).with_sound_gen(EmptySoundGen);
+      let _ = tx.send(rt.block_on(pipeline.generate(&script)).is_err());
+    });
+    let errored = rx
+      .recv_timeout(std::time::Duration::from_secs(10))
+      .expect("pipeline hung on an empty BGM buffer");
+    assert!(errored, "empty BGM should be reported as an error");
+  }
+
+  #[tokio::test]
+  async fn test_episode_timings_account_for_intro_and_crossfade() {
+    let json = r#"{
+      "title": "Timing",
+      "speakers": { "host": { "voice_id": "alloy" }, "guest": { "voice_id": "echo" } },
+      "segments": [
+        { "speaker": "host", "text": "Welcome to the show" },
+        { "speaker": "guest", "text": "Glad to be here" }
+      ],
+      "config": {
+        "pause_between_segments_secs": 0.5,
+        "crossfade_secs": 0.2,
+        "intro": { "kind": "generated", "prompt": { "prompt": "jingle" } }
+      }
+    }"#;
+    let script = PodcastScript::from_json(json).unwrap();
+    let pipeline = PodcastPipeline::new(MockTts).with_sound_gen(MockSoundGen {
+      calls: Arc::new(AtomicUsize::new(0)),
+    });
+    let episode = pipeline.generate_episode(&script).await.unwrap();
+
+    // MockSoundGen's intro is exactly 1 s, so speech starts at 1 s.
+    let ch = &episode.chapters;
+    assert_eq!(ch.len(), 2);
+    assert!(
+      (ch[0].start - 1.0).abs() < 1e-3,
+      "first start {}",
+      ch[0].start
+    );
+
+    // MockTts: 0.5 s + 20 ms per char. Crossfade overlaps 0.2 s of the pause.
+    let seg0 = 0.5 + "Welcome to the show".len() as f64 * 0.02;
+    let expected_second = 1.0 + seg0 + 0.5 - 0.2;
+    assert!(
+      (ch[1].start - expected_second).abs() < 5e-3,
+      "second start {} expected {}",
+      ch[1].start,
+      expected_second
+    );
+
+    // The last chapter ends where the audio ends (no outro configured).
+    let total = episode.audio.duration_secs();
+    let last_end = ch[1].end.unwrap_or(f64::NAN);
+    assert!((last_end - total).abs() < 5e-3, "end {last_end} vs {total}");
+
+    let srt = episode.srt.as_deref().unwrap_or("");
+    assert!(srt.contains("00:00:01,000 -->"), "srt:\n{srt}");
   }
 
   #[tokio::test]
