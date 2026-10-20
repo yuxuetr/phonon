@@ -310,7 +310,11 @@ fn render(
   Ok((assembled, spans))
 }
 
-/// Post-process segments: resample and channel-convert to target format.
+/// True-peak ceiling for the loudest-peaking segment after leveling.
+const SEGMENT_TRUE_PEAK_DBTP: f32 = -1.0;
+
+/// Post-process segments: resample, channel-convert to target format and
+/// level them to one loudness (see [`level_segments`]).
 fn post_process_segments(
   buffers: Vec<AudioBuffer>,
   target_rate: u32,
@@ -331,13 +335,41 @@ fn post_process_segments(
         .map_err(|e| PodcastError::Processing(format!("Channel convert segment {}: {}", i, e)))?;
     }
 
-    // Per-segment normalize to consistent volume
-    phonon_core::normalize(&mut buf, 0.9);
-
     processed.push(buf);
   }
 
+  level_segments(&mut processed);
+
   Ok(processed)
+}
+
+/// Give every segment the same integrated loudness: the highest at which
+/// no segment's true peak exceeds [`SEGMENT_TRUE_PEAK_DBTP`]. Matching
+/// peaks instead leaves TTS voices up to 6 dB apart; a fixed loudness
+/// target would either clip peaky voices or move speech against BGM, which
+/// is scaled independently. Segments too short to measure (< 400 ms) are
+/// peak-normalized as before.
+fn level_segments(segments: &mut [AudioBuffer]) {
+  let measured: Vec<Option<(f32, f32)>> = segments
+    .iter()
+    .map(|buf| {
+      let lufs = phonon_core::loudness_integrated(buf);
+      lufs
+        .is_finite()
+        .then(|| (lufs, phonon_core::true_peak_dbtp(buf)))
+    })
+    .collect();
+  let target = measured
+    .iter()
+    .flatten()
+    .map(|(lufs, peak)| lufs + SEGMENT_TRUE_PEAK_DBTP - peak)
+    .fold(f32::INFINITY, f32::min);
+  for (buf, level) in segments.iter_mut().zip(measured) {
+    match level {
+      Some((lufs, _)) => phonon_core::adjust_volume_db(buf, target - lufs),
+      None => phonon_core::normalize(buf, 0.9),
+    }
+  }
 }
 
 /// Assemble segments with silence pauses or crossfades between them.
@@ -467,6 +499,49 @@ mod tests {
   use phonon_ai::{AiError, VoiceConfig};
   use std::sync::Arc;
   use std::sync::atomic::{AtomicUsize, Ordering};
+
+  fn sine(secs: f32, amp: f32) -> Vec<f32> {
+    (0..(secs * 16_000.0) as usize)
+      .map(|i| amp * (std::f32::consts::TAU * 440.0 * i as f32 / 16_000.0).sin())
+      .collect()
+  }
+
+  #[test]
+  fn test_segments_match_loudness_not_peak() {
+    // Same peak, very different loudness: a steady tone vs a quiet tone
+    // with one loud burst. Peak normalization leaves them ~20 dB apart.
+    let steady = AudioBuffer {
+      samples: sine(3.0, 0.5),
+      sample_rate: 16_000,
+      channels: 1,
+    };
+    let mut bursty = sine(3.0, 0.05);
+    bursty[..800].copy_from_slice(&sine(0.05, 0.5));
+    let bursty = AudioBuffer {
+      samples: bursty,
+      sample_rate: 16_000,
+      channels: 1,
+    };
+    let short = AudioBuffer {
+      samples: sine(0.2, 0.1),
+      sample_rate: 16_000,
+      channels: 1,
+    };
+    let out = post_process_segments(vec![steady, bursty, short], 16_000, 1).expect("process");
+    let a = phonon_core::loudness_integrated(&out[0]);
+    let b = phonon_core::loudness_integrated(&out[1]);
+    assert!((a - b).abs() <= 0.1, "segments {a:.2} vs {b:.2} LUFS");
+    // The peakier segment sets the level: its true peak sits at the ceiling.
+    let peaks = [&out[0], &out[1]].map(phonon_core::true_peak_dbtp);
+    assert!(
+      (peaks[1] - SEGMENT_TRUE_PEAK_DBTP).abs() < 0.05,
+      "{peaks:?}"
+    );
+    assert!(peaks[0] < peaks[1], "{peaks:?}");
+    // Too short to measure: falls back to peak normalization.
+    let peak = out[2].samples.iter().fold(0f32, |m, s| m.max(s.abs()));
+    assert!((peak - 0.9).abs() < 1e-3, "short segment peak {peak}");
+  }
 
   /// Mock SoundGenProvider that records prompt count and returns a quiet
   /// 1 s sine at 44.1 kHz mono — long enough to be looped/trimmed by the
