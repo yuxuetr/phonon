@@ -23,5 +23,9 @@ tracing.workspace = true
 tokio.workspace = true
 futures.workspace = true
 
+[features]
+# Enables Episode::export_aac via phonon-io's opt-in AAC encoder.
+aac = ["phonon-io/aac"]
+
 [dev-dependencies]
 tempfile.workspace = true

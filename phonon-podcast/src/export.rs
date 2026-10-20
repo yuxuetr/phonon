@@ -10,9 +10,11 @@ use crate::chapters::{Chapter, assign_chapter_times};
 use crate::script::PodcastScript;
 use crate::subtitle::{SubtitleEntry, generate_srt};
 use phonon_core::AudioBuffer;
+#[cfg(feature = "aac")]
+use phonon_io::{AacConfig, write_aac};
 use phonon_io::{
-  AacConfig, AudioChapter, FlacConfig, Mp3Config, OggConfig, PodcastTags, write_aac, write_flac,
-  write_flac_tagged, write_mp3, write_mp3_tagged, write_ogg, write_ogg_tagged,
+  AudioChapter, FlacConfig, Mp3Config, OggConfig, PodcastTags, write_flac, write_flac_tagged,
+  write_mp3, write_mp3_tagged, write_ogg, write_ogg_tagged,
 };
 use std::path::Path;
 use tracing::{info, instrument};
@@ -127,6 +129,8 @@ impl Episode {
   }
 
   /// Export as AAC. AAC tagging is not supported here — only the audio is written.
+  /// Requires the `aac` feature (see phonon-io's licensing notes).
+  #[cfg(feature = "aac")]
   pub fn export_aac(
     &self,
     path: impl AsRef<Path>,
