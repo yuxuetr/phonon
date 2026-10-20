@@ -127,7 +127,8 @@
   - DONE: 4 处构造函数统一走 `env_key()`;删除 3 个 `remove_var` 测试,改为对一个从不设置的变量名测试 `env_key`
 - [x] **G4** 引擎:`append_samples` 不在锁内扩容;`ParametricEqPlugin` 不在 `process` 内重建 / 分配
   - DONE: samples 改 `RwLock`,扩容在读锁下拷贝、写锁只做交换;`ParametricEq::set_band` 原地换系数并保留滤波器状态(格式变化时仍重建)
-- [ ] **G5** Studio:EQ / 效果 / 播放前重采样 / 整轨 FFT 移出 UI 线程
+- [x] **G5** Studio:EQ / 效果 / 播放前重采样 / 整轨 FFT 移出 UI 线程
+  - DONE: `transform_audio` / `load_audio` 把处理与 waveform/FFT 放到 `spawn_blocking`;播放前的音量/重采样/声道转换同样移出。仅编译 + clippy 验证,GUI 未手动点测
 - [ ] **G6** 管线:`assemble_segments` 的 O(n²) 合并;`generate_episode` 改用并发 TTS(时间轴已按 span 计算,不再需要顺序合成)
 - [ ] **G7** LUFS 真峰值相位偏移(0.375/0.625/0.875 → 0.25/0.5/0.75)
 - [ ] **G8** AAC 结束时未 flush 编码器尾部;`read_audio` 遇单个坏包即整体失败(应跳过 DecodeError)
