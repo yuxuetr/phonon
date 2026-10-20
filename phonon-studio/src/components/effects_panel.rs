@@ -2,9 +2,8 @@
 
 use dioxus::prelude::*;
 use phonon_core::{AudioBuffer, algorithms};
-use std::sync::Arc;
 
-use crate::state::{AppState, build_display_info};
+use crate::state::{AppState, transform_audio};
 
 #[component]
 pub fn EffectsPanel() -> Element {
@@ -77,8 +76,8 @@ pub fn EffectsPanel() -> Element {
           // Apply button
           button {
               class: "w-full px-3 py-2 rounded-sm bg-emerald-600 text-white font-medium hover:opacity-90 transition mt-2",
-              onclick: move |_| {
-                  apply_effects(&mut state);
+              onclick: move |_| async move {
+                  apply_effects(&mut state).await;
               },
               "Apply Effects"
           }
@@ -86,45 +85,33 @@ pub fn EffectsPanel() -> Element {
   }
 }
 
-fn apply_effects(state: &mut AppState) {
-  let reader = state.audio_buffer.read();
-  let Some(ref buf_arc) = *reader else { return };
+async fn apply_effects(state: &mut AppState) {
   let eff = (state.effects)();
+  let transform = move |buf: &mut AudioBuffer| {
+    algorithms::normalize(buf, eff.normalize_target);
 
-  let mut buf = AudioBuffer {
-    samples: buf_arc.samples.clone(),
-    sample_rate: buf_arc.sample_rate,
-    channels: buf_arc.channels,
-  };
-  drop(reader);
-
-  algorithms::normalize(&mut buf, eff.normalize_target);
-
-  if eff.fade_in_secs > 0.0 {
-    algorithms::fade_in(&mut buf, eff.fade_in_secs);
-  }
-  if eff.fade_out_secs > 0.0 {
-    algorithms::fade_out(&mut buf, eff.fade_out_secs);
-  }
-  if (eff.speed_factor - 1.0).abs() > 0.01 {
-    if let Ok(b) = algorithms::change_speed(&buf, eff.speed_factor) {
-      buf = b;
+    if eff.fade_in_secs > 0.0 {
+      algorithms::fade_in(buf, eff.fade_in_secs);
     }
-  }
-  match eff.compress_preset.as_str() {
-    "voice" => buf = algorithms::with_compression(&buf, &algorithms::CompressorConfig::voice()),
-    "gentle" => buf = algorithms::with_compression(&buf, &algorithms::CompressorConfig::gentle()),
-    "limiter" => buf = algorithms::with_compression(&buf, &algorithms::CompressorConfig::limiter()),
-    _ => {}
-  }
-
-  let path_str = (state.display_info)()
-    .map(|i| i.path.clone())
-    .unwrap_or_default();
-  let info = build_display_info(&buf, &path_str);
-  state.display_info.set(Some(info));
-  state.audio_buffer.set(Some(Arc::new(buf)));
-  state.status_msg.set("Effects applied".to_string());
+    if eff.fade_out_secs > 0.0 {
+      algorithms::fade_out(buf, eff.fade_out_secs);
+    }
+    if (eff.speed_factor - 1.0).abs() > 0.01
+      && let Ok(b) = algorithms::change_speed(buf, eff.speed_factor)
+    {
+      *buf = b;
+    }
+    let preset = match eff.compress_preset.as_str() {
+      "voice" => Some(algorithms::CompressorConfig::voice()),
+      "gentle" => Some(algorithms::CompressorConfig::gentle()),
+      "limiter" => Some(algorithms::CompressorConfig::limiter()),
+      _ => None,
+    };
+    if let Some(config) = preset {
+      *buf = algorithms::with_compression(buf, &config);
+    }
+  };
+  transform_audio(state, transform, "Effects applied".to_string()).await;
 }
 
 #[component]

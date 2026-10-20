@@ -1,10 +1,9 @@
 #![allow(non_snake_case)]
 
 use dioxus::prelude::*;
-use phonon_core::{AudioBuffer, EqBand, FilterType, algorithms};
-use std::sync::Arc;
+use phonon_core::{EqBand, FilterType, algorithms};
 
-use crate::state::{AppState, build_display_info};
+use crate::state::{AppState, transform_audio};
 
 /// 5-band EQ frequencies and labels.
 const BAND_INFO: [(f64, &str); 5] = [
@@ -97,8 +96,8 @@ pub fn EqPanel() -> Element {
           // Apply
           button {
               class: "w-full px-3 py-2 rounded-sm bg-violet-600 text-white font-medium hover:opacity-90 transition",
-              onclick: move |_| {
-                  apply_eq(&mut state);
+              onclick: move |_| async move {
+                  apply_eq(&mut state).await;
               },
               "Apply EQ"
           }
@@ -106,9 +105,7 @@ pub fn EqPanel() -> Element {
   }
 }
 
-fn apply_eq(state: &mut AppState) {
-  let reader = state.audio_buffer.read();
-  let Some(ref buf_arc) = *reader else { return };
+async fn apply_eq(state: &mut AppState) {
   let eff = (state.effects)();
 
   // Build EQ bands from the 5-band gains
@@ -136,22 +133,6 @@ fn apply_eq(state: &mut AppState) {
     return;
   }
 
-  let mut buf = AudioBuffer {
-    samples: buf_arc.samples.clone(),
-    sample_rate: buf_arc.sample_rate,
-    channels: buf_arc.channels,
-  };
-  drop(reader);
-
-  algorithms::apply_eq(&mut buf, &bands);
-
-  let path_str = (state.display_info)()
-    .map(|i| i.path.clone())
-    .unwrap_or_default();
-  let info = build_display_info(&buf, &path_str);
-  state.display_info.set(Some(info));
-  state.audio_buffer.set(Some(Arc::new(buf)));
-  state
-    .status_msg
-    .set(format!("EQ applied ({} bands)", bands.len()));
+  let done = format!("EQ applied ({} bands)", bands.len());
+  transform_audio(state, move |buf| algorithms::apply_eq(buf, &bands), done).await;
 }

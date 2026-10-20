@@ -6,14 +6,13 @@ mod state;
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 use dioxus_logger::tracing;
-use std::sync::Arc;
 
 use components::{
   effects_panel::EffectsPanel, eq_panel::EqPanel, export_panel::ExportPanel, header::Header,
   info_panel::InfoPanel, plugin_browser::PluginBrowser, transport::Transport,
   waveform::WaveformView,
 };
-use state::{AppState, SidePanel, build_display_info};
+use state::{AppState, SidePanel, load_audio};
 
 /// Tailwind CSS asset for desktop and web
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
@@ -107,29 +106,5 @@ async fn handle_drop(state: &mut AppState, evt: Event<DragData>) {
   }
 
   let path_buf = std::path::PathBuf::from(&first_name);
-  let path_str = path_buf.to_string_lossy().to_string();
-  state
-    .status_msg
-    .set(format!("Loading {}...", path_buf.display()));
-
-  let load_result = tokio::task::spawn_blocking(move || phonon_io::read_audio(&path_buf)).await;
-
-  let buffer = match load_result {
-    Ok(Ok(buf)) => buf,
-    Ok(Err(e)) => {
-      state.status_msg.set(format!("Error: {}", e));
-      return;
-    }
-    Err(e) => {
-      state.status_msg.set(format!("Task error: {}", e));
-      return;
-    }
-  };
-
-  let info = build_display_info(&buffer, &path_str);
-  state.display_info.set(Some(info));
-  state.audio_buffer.set(Some(Arc::new(buffer)));
-  state
-    .status_msg
-    .set("File loaded (drag & drop)".to_string());
+  load_audio(state, path_buf, "File loaded (drag & drop)").await;
 }

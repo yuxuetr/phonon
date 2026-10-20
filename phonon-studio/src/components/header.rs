@@ -1,9 +1,8 @@
 #![allow(non_snake_case)]
 
 use dioxus::prelude::*;
-use std::sync::Arc;
 
-use crate::state::{AppState, SidePanel, build_display_info};
+use crate::state::{AppState, SidePanel, load_audio};
 
 #[component]
 pub fn Header() -> Element {
@@ -93,30 +92,5 @@ async fn open_audio_file(state: &mut AppState) {
     return;
   };
 
-  let path_buf = path.path().to_path_buf();
-  let path_str = path_buf.to_string_lossy().to_string();
-  state
-    .status_msg
-    .set(format!("Loading {}...", path_buf.display()));
-
-  let load_result = tokio::task::spawn_blocking(move || phonon_io::read_audio(&path_buf)).await;
-
-  let buffer = match load_result {
-    Ok(Ok(buf)) => buf,
-    Ok(Err(e)) => {
-      state.status_msg.set(format!("Error: {}", e));
-      return;
-    }
-    Err(e) => {
-      state.status_msg.set(format!("Task error: {}", e));
-      return;
-    }
-  };
-
-  state.status_msg.set("Generating waveform...".to_string());
-
-  let info = build_display_info(&buffer, &path_str);
-  state.display_info.set(Some(info));
-  state.audio_buffer.set(Some(Arc::new(buffer)));
-  state.status_msg.set("File loaded successfully".to_string());
+  load_audio(state, path.path().to_path_buf(), "File loaded successfully").await;
 }

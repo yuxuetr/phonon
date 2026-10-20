@@ -224,3 +224,61 @@ pub fn build_display_info(buffer: &AudioBuffer, path: &str) -> AudioDisplayInfo 
     spectrum_bars,
   }
 }
+
+/// Decode `path` and compute its display info on the blocking pool, then
+/// install both. Reports progress and errors through `status_msg`.
+pub async fn load_audio(state: &mut AppState, path: std::path::PathBuf, done_msg: &str) {
+  let path_str = path.to_string_lossy().to_string();
+  state
+    .status_msg
+    .set(format!("Loading {}...", path.display()));
+
+  let loaded = tokio::task::spawn_blocking(move || {
+    phonon_io::read_audio(&path).map(|buf| {
+      let info = build_display_info(&buf, &path_str);
+      (buf, info)
+    })
+  })
+  .await;
+
+  match loaded {
+    Ok(Ok((buf, info))) => {
+      state.display_info.set(Some(info));
+      state.audio_buffer.set(Some(Arc::new(buf)));
+      state.status_msg.set(done_msg.to_string());
+    }
+    Ok(Err(e)) => state.status_msg.set(format!("Error: {}", e)),
+    Err(e) => state.status_msg.set(format!("Task error: {}", e)),
+  }
+}
+
+/// Apply `transform` to a copy of the loaded buffer on the blocking pool,
+/// recompute the display info (waveform + FFT) there too, and install the
+/// result. The UI thread only clones an `Arc` and swaps signals.
+pub async fn transform_audio<F>(state: &mut AppState, transform: F, done_msg: String)
+where
+  F: FnOnce(&mut AudioBuffer) + Send + 'static,
+{
+  let Some(source) = state.audio_buffer.read().clone() else {
+    return;
+  };
+  let path = (state.display_info)().map(|i| i.path).unwrap_or_default();
+  state.status_msg.set("Processing...".to_string());
+
+  let processed = tokio::task::spawn_blocking(move || {
+    let mut buf = AudioBuffer::clone(&source);
+    transform(&mut buf);
+    let info = build_display_info(&buf, &path);
+    (buf, info)
+  })
+  .await;
+
+  match processed {
+    Ok((buf, info)) => {
+      state.display_info.set(Some(info));
+      state.audio_buffer.set(Some(Arc::new(buf)));
+      state.status_msg.set(done_msg);
+    }
+    Err(e) => state.status_msg.set(format!("Task error: {}", e)),
+  }
+}

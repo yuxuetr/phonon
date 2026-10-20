@@ -30,7 +30,7 @@ pub fn Transport() -> Element {
               button {
                   class: "px-3 py-2 rounded-sm shadow-sm transition hover:opacity-90 bg-neutral-700 text-white text-xl",
                   title: "Play",
-                  onclick: move |_| { play_audio(&mut state); },
+                  onclick: move |_| async move { play_audio(&mut state).await; },
                   "▶"
               }
               button {
@@ -96,7 +96,7 @@ pub fn Transport() -> Element {
   }
 }
 
-fn play_audio(state: &mut AppState) {
+async fn play_audio(state: &mut AppState) {
   // Init player if needed
   if state.player_state.read().is_none() {
     match AudioPlayer::new() {
@@ -108,59 +108,66 @@ fn play_audio(state: &mut AppState) {
     }
   }
 
-  let buf_reader = state.audio_buffer.read();
-  let Some(ref buf_arc) = *buf_reader else {
+  let Some(source) = state.audio_buffer.read().clone() else {
     return;
   };
-  let player_reader = state.player_state.read();
-  let Some(ref player) = *player_reader else {
-    return;
+  // Signal guards must not live across the await below.
+  let device = {
+    let player_reader = state.player_state.read();
+    let Some(ref player) = *player_reader else {
+      return;
+    };
+    // If paused, just resume
+    if player.playback_state() == phonon_engine::PlaybackState::Paused {
+      player.resume();
+      None
+    } else {
+      Some((player.device_sample_rate(), player.device_channels()))
+    }
   };
-
-  // If paused, just resume
-  if player.playback_state() == phonon_engine::PlaybackState::Paused {
-    player.resume();
+  let Some((device_rate, device_channels)) = device else {
     state.status_msg.set("Resumed".to_string());
     return;
-  }
-
-  let mut buffer = AudioBuffer {
-    samples: buf_arc.samples.clone(),
-    sample_rate: buf_arc.sample_rate,
-    channels: buf_arc.channels,
   };
 
-  // Apply volume
+  // Volume, resampling and channel conversion run on the blocking pool.
   let vol = (state.volume)();
-  if (vol - 1.0).abs() > 0.01 {
-    algorithms::adjust_volume(&mut buffer, vol);
-  }
-
-  // Resample if needed
-  let device_rate = player.device_sample_rate();
-  if buffer.sample_rate != device_rate {
-    state.status_msg.set(format!(
-      "Resampling {}->{}Hz...",
-      buffer.sample_rate, device_rate
-    ));
-    if let Ok(b) = algorithms::resample(&buffer, device_rate) {
-      buffer = b;
+  state.status_msg.set(format!(
+    "Preparing {}Hz/{}ch -> {}Hz/{}ch...",
+    source.sample_rate, source.channels, device_rate, device_channels
+  ));
+  let prepared = tokio::task::spawn_blocking(move || {
+    let mut buffer = AudioBuffer::clone(&source);
+    if (vol - 1.0).abs() > 0.01 {
+      algorithms::adjust_volume(&mut buffer, vol);
     }
-  }
-
-  // Channel conversion
-  let device_channels = player.device_channels();
-  if buffer.channels != device_channels {
-    state.status_msg.set(format!(
-      "Converting Channels {}->{}...",
-      buffer.channels, device_channels
-    ));
-    if let Ok(b) = algorithms::ensure_channels(&buffer, device_channels) {
-      buffer = b;
+    if buffer.sample_rate != device_rate {
+      buffer = algorithms::resample(&buffer, device_rate)?;
     }
-  }
+    if buffer.channels != device_channels {
+      buffer = algorithms::ensure_channels(&buffer, device_channels)?;
+    }
+    Ok::<_, phonon_core::PhononError>(buffer)
+  })
+  .await;
 
-  match player.play(&buffer) {
+  let buffer = match prepared {
+    Ok(Ok(buffer)) => buffer,
+    Ok(Err(e)) => {
+      state.status_msg.set(format!("Playback Error: {}", e));
+      return;
+    }
+    Err(e) => {
+      state.status_msg.set(format!("Task error: {}", e));
+      return;
+    }
+  };
+
+  let result = match state.player_state.read().as_ref() {
+    Some(player) => player.play(&buffer),
+    None => return,
+  };
+  match result {
     Ok(_) => state.status_msg.set("Playing...".to_string()),
     Err(e) => state.status_msg.set(format!("Playback Error: {}", e)),
   }
