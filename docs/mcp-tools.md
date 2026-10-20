@@ -45,6 +45,7 @@ Tool handlers return one of:
 | `InvalidArgs(msg)` | Bad JSON shape, out-of-range values, unknown enum variant. |
 | `HandleNotFound(uuid)` | The requested handle isn't in the registry (or already dropped). |
 | `Audio(msg)` | A `phonon-core` / `phonon-io` / `phonon-ai` operation failed. |
+| `PathDenied(msg)` | Path escapes the sandbox root, or `audio_save` target exists without `overwrite`. |
 | `Io(msg)` | File system I/O failure (e.g. `audio_load` on a missing path). |
 | `ToolNotFound(name)` | `tools/call` with an unknown tool name. |
 | `Serde(msg)` | JSON deserialization failure inside a handler. |
@@ -57,6 +58,11 @@ Errors are surfaced through the JSON-RPC envelope as
 
 ## Basic — asset registry
 
+> **Sandbox.** `audio_load` / `audio_save` only touch files under the
+> sandbox root: `$PHONON_MCP_ROOT`, or the directory `phonon-mcp` was
+> launched from. Relative paths resolve against the root; absolute paths,
+> `..` and symlinks that land outside it are rejected with `PathDenied`.
+
 ### `audio_load`
 
 Load an audio file (WAV / MP3 / FLAC / OGG / AAC) and return a handle.
@@ -64,7 +70,7 @@ Format is inferred from the extension via Symphonia.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `path` | string | yes | Absolute or working-directory-relative path. |
+| `path` | string | yes | Root-relative path (absolute paths must lie inside the root). |
 
 Request:
 
@@ -84,12 +90,13 @@ Response:
 Save a handle to a file. Output format is inferred from the
 destination extension (`.wav` / `.mp3` / `.flac` / `.ogg` / `.aac`).
 
-| Field | Type | Required |
-|---|---|---|
-| `handle` | UUID | yes |
-| `path` | string | yes |
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `handle` | UUID | yes | |
+| `path` | string | yes | Root-relative; parent directory must exist. |
+| `overwrite` | bool | no | Default `false`: an existing file is not replaced. |
 
-Returns `{ "path": "<requested path>" }`.
+Returns `{ "path": "<resolved absolute path>" }`.
 
 ### `audio_info`
 
@@ -265,7 +272,7 @@ use phonon_mcp::{Server, tools::{Tool, ToolRegistry}};
 use serde_json::json;
 use std::sync::Arc;
 
-let mut tools = ToolRegistry::new();
+let mut tools = ToolRegistry::new("/path/to/sandbox/root");
 tools.register(Tool {
   name: "my_tool".into(),
   description: "…".into(),

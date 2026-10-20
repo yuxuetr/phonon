@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -38,27 +39,28 @@ pub struct Tool {
 }
 
 /// Registry of tools indexed by name. Built once at server startup.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct ToolRegistry {
   tools: BTreeMap<String, Tool>,
   pub registry: AssetRegistry,
+  /// Directory that `audio_load` / `audio_save` are confined to. Paths come
+  /// from the LLM, so they are resolved against this root and rejected if
+  /// they escape it (including via `..` or symlinks).
+  fs_root: PathBuf,
 }
 
 impl ToolRegistry {
-  /// Build the default registry (basic + DSP + measure tools).
-  pub fn new() -> Self {
-    let mut r = Self {
-      tools: BTreeMap::new(),
-      registry: AssetRegistry::new(),
-    };
-    register_builtins(&mut r);
-    r
+  /// Build the default registry (basic + DSP + measure tools) with file
+  /// access confined to `fs_root`.
+  pub fn new(fs_root: impl Into<PathBuf>) -> Self {
+    Self::with_asset_registry(AssetRegistry::new(), fs_root)
   }
 
-  pub fn with_asset_registry(asset: AssetRegistry) -> Self {
+  pub fn with_asset_registry(asset: AssetRegistry, fs_root: impl Into<PathBuf>) -> Self {
     let mut r = Self {
       tools: BTreeMap::new(),
       registry: asset,
+      fs_root: fs_root.into(),
     };
     register_builtins(&mut r);
     r
@@ -112,6 +114,8 @@ struct LoadArgs {
 struct SaveArgs {
   handle: AudioHandle,
   path: String,
+  #[serde(default)]
+  overwrite: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -201,6 +205,66 @@ fn make_handle_result(handle: AudioHandle, buf: &AudioBuffer) -> Value {
   .unwrap_or(Value::Null)
 }
 
+// ─── Filesystem sandbox ────────────────────────────────────────────────────
+
+fn canonical_root(root: &Path) -> Result<PathBuf, McpError> {
+  root
+    .canonicalize()
+    .map_err(|e| McpError::Io(format!("sandbox root {}: {e}", root.display())))
+}
+
+fn ensure_within(root: &Path, resolved: PathBuf, requested: &str) -> Result<PathBuf, McpError> {
+  if resolved.starts_with(root) {
+    Ok(resolved)
+  } else {
+    Err(McpError::PathDenied(format!(
+      "{requested} is outside the allowed root {}",
+      root.display()
+    )))
+  }
+}
+
+/// Resolves a path to read: it must exist and, after following symlinks,
+/// lie inside `root`. Relative paths are taken relative to `root`.
+fn resolve_for_read(root: &Path, path: &str) -> Result<PathBuf, McpError> {
+  let root = canonical_root(root)?;
+  let resolved = root
+    .join(path)
+    .canonicalize()
+    .map_err(|e| McpError::Io(format!("{path}: {e}")))?;
+  ensure_within(&root, resolved, path)
+}
+
+/// Resolves a path to write: its parent directory must exist inside `root`,
+/// and an existing target (file or symlink) is only replaced with
+/// `overwrite`, and only if it also resolves inside `root`.
+fn resolve_for_write(root: &Path, path: &str, overwrite: bool) -> Result<PathBuf, McpError> {
+  let root = canonical_root(root)?;
+  let joined = root.join(path);
+  let name = joined
+    .file_name()
+    .ok_or_else(|| McpError::InvalidArgs(format!("{path}: not a file path")))?;
+  let parent = joined
+    .parent()
+    .unwrap_or(&root)
+    .canonicalize()
+    .map_err(|e| McpError::Io(format!("{path}: {e}")))?;
+  let target = ensure_within(&root, parent, path)?.join(name);
+
+  if target.symlink_metadata().is_ok() {
+    if !overwrite {
+      return Err(McpError::PathDenied(format!(
+        "{path} already exists; pass \"overwrite\": true to replace it"
+      )));
+    }
+    let resolved = target
+      .canonicalize()
+      .map_err(|e| McpError::Io(format!("{path}: {e}")))?;
+    ensure_within(&root, resolved, path)?;
+  }
+  Ok(target)
+}
+
 // ─── Built-in tool registration ────────────────────────────────────────────
 
 fn register_builtins(r: &mut ToolRegistry) {
@@ -227,11 +291,14 @@ fn register_builtins(r: &mut ToolRegistry) {
 
 fn register_audio_load(r: &mut ToolRegistry) {
   let registry = r.registry.clone();
+  let fs_root = r.fs_root.clone();
   let handler: ToolHandler = Arc::new(move |args| {
     let registry = registry.clone();
+    let fs_root = fs_root.clone();
     Box::pin(async move {
       let LoadArgs { path } =
         serde_json::from_value(args).map_err(|e| McpError::InvalidArgs(e.to_string()))?;
+      let path = resolve_for_read(&fs_root, &path)?;
       let buf = phonon_io::read_audio(&path).map_err(McpError::from)?;
       let handle = registry.insert(buf.clone());
       Ok(make_handle_result(handle, &buf))
@@ -239,10 +306,12 @@ fn register_audio_load(r: &mut ToolRegistry) {
   });
   r.register(Tool {
     name: "audio_load".into(),
-    description: "Load an audio file (WAV/MP3/FLAC/OGG/AAC) and return a handle.".into(),
+    description: "Load an audio file (WAV/MP3/FLAC/OGG/AAC) and return a handle. \
+                  Paths are confined to the server's sandbox root."
+      .into(),
     input_schema: json!({
       "type": "object",
-      "properties": { "path": { "type": "string", "description": "Path to the audio file." } },
+      "properties": { "path": { "type": "string", "description": "Path to the audio file, relative to the sandbox root." } },
       "required": ["path"],
     }),
     handler,
@@ -251,24 +320,33 @@ fn register_audio_load(r: &mut ToolRegistry) {
 
 fn register_audio_save(r: &mut ToolRegistry) {
   let registry = r.registry.clone();
+  let fs_root = r.fs_root.clone();
   let handler: ToolHandler = Arc::new(move |args| {
     let registry = registry.clone();
+    let fs_root = fs_root.clone();
     Box::pin(async move {
-      let SaveArgs { handle, path } =
-        serde_json::from_value(args).map_err(|e| McpError::InvalidArgs(e.to_string()))?;
+      let SaveArgs {
+        handle,
+        path,
+        overwrite,
+      } = serde_json::from_value(args).map_err(|e| McpError::InvalidArgs(e.to_string()))?;
       let buf = registry.get(&handle)?;
-      phonon_io::write_audio(&path, &buf).map_err(McpError::from)?;
-      Ok(json!({ "path": path }))
+      let target = resolve_for_write(&fs_root, &path, overwrite)?;
+      phonon_io::write_audio(&target, &buf).map_err(McpError::from)?;
+      Ok(json!({ "path": target.to_string_lossy() }))
     })
   });
   r.register(Tool {
     name: "audio_save".into(),
-    description: "Save an audio handle to a file. Format inferred from extension.".into(),
+    description: "Save an audio handle to a file inside the sandbox root. Format inferred \
+                  from extension. Existing files are only replaced with overwrite=true."
+      .into(),
     input_schema: json!({
       "type": "object",
       "properties": {
-        "handle": { "type": "string" },
-        "path":   { "type": "string" }
+        "handle":    { "type": "string" },
+        "path":      { "type": "string", "description": "Output path, relative to the sandbox root." },
+        "overwrite": { "type": "boolean", "default": false }
       },
       "required": ["handle", "path"],
     }),
@@ -663,6 +741,115 @@ fn finite_or_null(v: f32) -> Value {
 mod tests {
   use super::*;
 
+  /// A sandbox root plus a sibling directory outside of it.
+  struct Dirs {
+    _tmp: tempfile::TempDir,
+    root: std::path::PathBuf,
+    outside: std::path::PathBuf,
+  }
+
+  fn dirs() -> Dirs {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("root");
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    Dirs {
+      _tmp: tmp,
+      root,
+      outside,
+    }
+  }
+
+  fn write_dummy_wav(path: &std::path::Path) {
+    phonon_io::write_audio(path, &dummy()).unwrap();
+  }
+
+  #[tokio::test]
+  async fn test_load_rejects_paths_outside_root() {
+    let d = dirs();
+    let secret = d.outside.join("secret.wav");
+    write_dummy_wav(&secret);
+    let r = ToolRegistry::new(&d.root);
+
+    for path in [
+      secret.to_string_lossy().into_owned(),
+      "../outside/secret.wav".to_string(),
+    ] {
+      let err = r.call("audio_load", json!({ "path": path })).await;
+      assert!(
+        matches!(err, Err(McpError::PathDenied(_))),
+        "{path}: {err:?}"
+      );
+    }
+  }
+
+  #[cfg(unix)]
+  #[tokio::test]
+  async fn test_load_rejects_symlink_escaping_root() {
+    let d = dirs();
+    let secret = d.outside.join("secret.wav");
+    write_dummy_wav(&secret);
+    std::os::unix::fs::symlink(&secret, d.root.join("link.wav")).unwrap();
+    let r = ToolRegistry::new(&d.root);
+    let err = r.call("audio_load", json!({ "path": "link.wav" })).await;
+    assert!(matches!(err, Err(McpError::PathDenied(_))), "{err:?}");
+  }
+
+  #[tokio::test]
+  async fn test_load_and_save_inside_root() {
+    let d = dirs();
+    write_dummy_wav(&d.root.join("in.wav"));
+    let r = ToolRegistry::new(&d.root);
+    let loaded = r
+      .call("audio_load", json!({ "path": "in.wav" }))
+      .await
+      .unwrap();
+    let h = loaded["handle"].clone();
+    r.call("audio_save", json!({ "handle": h, "path": "out.wav" }))
+      .await
+      .unwrap();
+    assert!(d.root.join("out.wav").exists());
+  }
+
+  #[tokio::test]
+  async fn test_save_rejects_paths_outside_root() {
+    let d = dirs();
+    let r = ToolRegistry::new(&d.root);
+    let h = r.registry.insert(dummy());
+    for path in [
+      d.outside.join("x.wav").to_string_lossy().into_owned(),
+      "../outside/x.wav".to_string(),
+    ] {
+      let err = r
+        .call("audio_save", json!({ "handle": h, "path": path }))
+        .await;
+      assert!(
+        matches!(err, Err(McpError::PathDenied(_))),
+        "{path}: {err:?}"
+      );
+    }
+    assert!(!d.outside.join("x.wav").exists());
+  }
+
+  #[tokio::test]
+  async fn test_save_requires_overwrite_flag_for_existing_file() {
+    let d = dirs();
+    write_dummy_wav(&d.root.join("existing.wav"));
+    let r = ToolRegistry::new(&d.root);
+    let h = r.registry.insert(dummy());
+    let err = r
+      .call("audio_save", json!({ "handle": h, "path": "existing.wav" }))
+      .await;
+    assert!(matches!(err, Err(McpError::PathDenied(_))), "{err:?}");
+    r.call(
+      "audio_save",
+      json!({ "handle": h, "path": "existing.wav", "overwrite": true }),
+    )
+    .await
+    .unwrap();
+  }
+
   fn dummy() -> AudioBuffer {
     AudioBuffer {
       samples: vec![0.5; 48000],
@@ -673,7 +860,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_audio_info_returns_metadata() {
-    let r = ToolRegistry::new();
+    let r = ToolRegistry::new(std::env::temp_dir());
     let h = r.registry.insert(dummy());
     let out = r.call("audio_info", json!({ "handle": h })).await.unwrap();
     assert_eq!(out["sample_rate"], 48000);
@@ -683,7 +870,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_audio_drop_removes() {
-    let r = ToolRegistry::new();
+    let r = ToolRegistry::new(std::env::temp_dir());
     let h = r.registry.insert(dummy());
     let out = r.call("audio_drop", json!({ "handle": h })).await.unwrap();
     assert_eq!(out["removed"], true);
@@ -691,7 +878,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_audio_normalize_returns_new_handle() {
-    let r = ToolRegistry::new();
+    let r = ToolRegistry::new(std::env::temp_dir());
     let h = r.registry.insert(dummy());
     let out = r
       .call(
@@ -706,7 +893,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_audio_pan_mono_to_stereo() {
-    let r = ToolRegistry::new();
+    let r = ToolRegistry::new(std::env::temp_dir());
     let h = r.registry.insert(dummy());
     let out = r
       .call("audio_pan", json!({ "handle": h, "position": -1.0 }))
@@ -717,7 +904,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_audio_loudness_returns_report() {
-    let r = ToolRegistry::new();
+    let r = ToolRegistry::new(std::env::temp_dir());
     // ~5 s sine for proper LUFS integration.
     let n = 48000 * 5;
     let samples: Vec<f32> = (0..n)
@@ -742,14 +929,14 @@ mod tests {
 
   #[tokio::test]
   async fn test_unknown_tool_errors() {
-    let r = ToolRegistry::new();
+    let r = ToolRegistry::new(std::env::temp_dir());
     let err = r.call("does_not_exist", json!({})).await.unwrap_err();
     assert!(matches!(err, McpError::ToolNotFound(_)));
   }
 
   #[test]
   fn test_list_json_includes_all_tools() {
-    let r = ToolRegistry::new();
+    let r = ToolRegistry::new(std::env::temp_dir());
     let list = r.list_json();
     let arr = list.as_array().unwrap();
     let names: Vec<&str> = arr.iter().filter_map(|v| v["name"].as_str()).collect();

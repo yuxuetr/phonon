@@ -8,7 +8,7 @@ use crate::error::McpError;
 use phonon_core::AudioBuffer;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use uuid::Uuid;
 
 /// A handle to an audio buffer stored in the registry.
@@ -42,6 +42,8 @@ impl std::fmt::Display for AudioHandle {
 ///
 /// Cloning the registry yields a handle to the same shared store
 /// (cheap `Arc::clone`). All mutations go through an internal `Mutex`.
+/// A poisoned lock is recovered: every critical section is a single
+/// `HashMap` call, so a panic elsewhere cannot leave the map half-updated.
 #[derive(Debug, Clone, Default)]
 pub struct AssetRegistry {
   inner: Arc<Mutex<HashMap<AudioHandle, Arc<AudioBuffer>>>>,
@@ -55,7 +57,7 @@ impl AssetRegistry {
   /// Insert a buffer and return its handle.
   pub fn insert(&self, buffer: AudioBuffer) -> AudioHandle {
     let handle = AudioHandle::new();
-    let mut g = self.inner.lock().expect("registry mutex poisoned");
+    let mut g = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
     g.insert(handle.clone(), Arc::new(buffer));
     handle
   }
@@ -63,13 +65,13 @@ impl AssetRegistry {
   /// Insert a buffer with a caller-provided handle, replacing any prior
   /// entry. Used by tests and for fixed-id assets.
   pub fn insert_with(&self, handle: AudioHandle, buffer: AudioBuffer) {
-    let mut g = self.inner.lock().expect("registry mutex poisoned");
+    let mut g = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
     g.insert(handle, Arc::new(buffer));
   }
 
   /// Fetch a buffer by handle.
   pub fn get(&self, handle: &AudioHandle) -> Result<Arc<AudioBuffer>, McpError> {
-    let g = self.inner.lock().expect("registry mutex poisoned");
+    let g = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
     g.get(handle)
       .cloned()
       .ok_or_else(|| McpError::HandleNotFound(handle.0.clone()))
@@ -77,19 +79,19 @@ impl AssetRegistry {
 
   /// Remove a buffer; returns true if it was present.
   pub fn drop(&self, handle: &AudioHandle) -> bool {
-    let mut g = self.inner.lock().expect("registry mutex poisoned");
+    let mut g = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
     g.remove(handle).is_some()
   }
 
   /// List all current handles (in unspecified order).
   pub fn handles(&self) -> Vec<AudioHandle> {
-    let g = self.inner.lock().expect("registry mutex poisoned");
+    let g = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
     g.keys().cloned().collect()
   }
 
   /// Number of buffers currently stored.
   pub fn len(&self) -> usize {
-    let g = self.inner.lock().expect("registry mutex poisoned");
+    let g = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
     g.len()
   }
 

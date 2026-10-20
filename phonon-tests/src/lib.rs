@@ -425,7 +425,7 @@ mod tests {
     let out_path = std::env::temp_dir().join("phonon_mcp_out.wav");
     phonon_wav::write_wav(&in_path, &src).unwrap();
 
-    let tools = ToolRegistry::new();
+    let tools = ToolRegistry::new(std::env::temp_dir());
 
     // 1. audio_load
     let loaded = tools
@@ -456,7 +456,7 @@ mod tests {
     let _ = tools
       .call(
         "audio_save",
-        json!({ "handle": h_out, "path": out_path.to_string_lossy() }),
+        json!({ "handle": h_out, "path": out_path.to_string_lossy(), "overwrite": true }),
       )
       .await
       .unwrap();

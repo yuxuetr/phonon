@@ -15,6 +15,11 @@ pub enum McpError {
   #[error("Audio operation failed: {0}")]
   Audio(String),
 
+  /// A file path was rejected by the sandbox (outside the allowed root,
+  /// or an existing file without `overwrite`).
+  #[error("Path denied: {0}")]
+  PathDenied(String),
+
   /// I/O error.
   #[error("I/O error: {0}")]
   Io(String),

@@ -29,11 +29,17 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`
   "mcpServers": {
     "phonon": {
       "command": "/Users/you/.cargo/bin/phonon-mcp",
-      "args": []
+      "args": [],
+      "env": { "PHONON_MCP_ROOT": "/Users/you/podcast-assets" }
     }
   }
 }
 ```
+
+`audio_load` / `audio_save` are confined to `PHONON_MCP_ROOT` (default:
+the launch directory, which for Claude Desktop is often `/` — so set it).
+`audio_save` refuses to replace an existing file unless the call passes
+`"overwrite": true`.
 
 Restart Claude Desktop. The 14 audio tools show up in the agent's
 toolbox automatically.

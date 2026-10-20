@@ -45,10 +45,11 @@ pub struct Server {
 }
 
 impl Server {
-  pub fn new() -> Self {
+  /// Server with the built-in tools; file access is confined to `fs_root`.
+  pub fn new(fs_root: impl Into<std::path::PathBuf>) -> Self {
     Self {
       info: ServerInfo::default(),
-      tools: ToolRegistry::new(),
+      tools: ToolRegistry::new(fs_root),
     }
   }
 
@@ -175,12 +176,6 @@ impl Server {
   }
 }
 
-impl Default for Server {
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -188,7 +183,7 @@ mod tests {
   use serde_json::json;
 
   fn server() -> Server {
-    Server::new()
+    Server::new(std::env::temp_dir())
   }
 
   #[tokio::test]

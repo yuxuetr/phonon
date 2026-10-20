@@ -29,3 +29,6 @@ uuid.workspace = true
 [[bin]]
 name = "phonon-mcp"
 path = "src/bin/phonon-mcp.rs"
+
+[dev-dependencies]
+tempfile.workspace = true
