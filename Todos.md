@@ -111,5 +111,5 @@
 - [x] **F11** `HttpClient` 等 Debug 输出隐藏 API key ✅
 - [x] **F12** 删除未使用依赖(mcp → ai/podcast/schemars,studio → ai/podcast) ✅
 - [x] **F13** 效果抽象收敛:删 phonon-plugin、deprecated 包装、`EffectAsPlugin` ✅ (同时删 AudioEffect/add_effect,EffectChain 直接持有 DspPlugin)
-- [ ] **F14** phonon-io 编码器 feature 开关(aac 默认关)+ docs.rs 元数据
+- [x] **F14** phonon-io 编码器 feature 开关(aac 默认关)+ docs.rs 元数据 ✅ (只给 aac 加 feature;mp3/flac/ogg 暂无关闭需求,README 注明 LAME LGPL)
 - [ ] **F15** 文档同步(AGENTS / README / RoadMap / CHANGELOG 0.7)
