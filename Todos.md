@@ -105,7 +105,7 @@
 - [x] **F7** SIMD 在非 x86_64/aarch64 架构的标量 fallback ✅ (wasm32-wasip1 + node 实跑验证;CI 加 wasm32 lint)
 - [x] **F8** 压缩器(compressor + CompressorPlugin)按帧计算时间常数 ✅ (改为声道联动,同帧同增益)
 - [x] **F9** `channels == 0` 防护:相关算法返回错误;`read_audio` 无解码数据时报错 ✅ (AudioBuffer 字段私有化未做,需跨全 workspace 重构)
-- [ ] **F10** 引擎:回调不阻塞(try_lock)、控制线程不在锁内分配/释放、`seek` 帧对齐
+- [x] **F10** 引擎:回调不阻塞(try_lock)、控制线程不在锁内分配/释放、`seek` 帧对齐 ✅ (遗留:append_samples 锁内扩容、ParametricEqPlugin 回调内重建)
 
 ### P2 — 质量与架构
 - [ ] **F11** `HttpClient` 等 Debug 输出隐藏 API key
