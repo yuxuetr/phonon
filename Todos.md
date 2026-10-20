@@ -178,3 +178,28 @@
   - 做法:workspace 的 reqwest 升到 0.13,补齐 0.13 中改为可选的 feature;0.13 默认 TLS 为 rustls(0.12 为 native-tls),用联网 Edge TTS 测试与本地服务器测试验证
   - 验收:`cargo tree -d -e normal | grep -c '^reqwest'` 为 0
   - DONE: reqwest 0.13 + `query` feature;重复 reqwest 0 份,同时移除 native-tls / hyper-tls(512 → 508 个依赖);MiniMax 联网请求通过,workspace 测试 479 通过(a908888)
+
+## v0.8 — 可配置模型 provider
+
+> 设计与厂商实测见 [docs/providers.md](./docs/providers.md)。优先 MiniMax / Qwen / GLM / StepFun,
+> 兼容 OpenAI 协议的自部署服务。每项都用真实 key 联网验证。
+
+- [ ] **J1** OpenAI 协议的 TTS / STT 适配厂商差异:GLM TTS 不支持 mp3;StepFun STT 拒绝 `verbose_json` 且无时间戳;GLM STT 默认即返回 segments
+  - 做法:`OpenAiTts` 输出格式可配;`WhisperStt` 是否请求 `verbose_json` 可配，响应统一宽松解析;请求时间戳而 provider 不支持时报错
+  - 验收:StepFun / GLM TTS,MiniMax / GLM / StepFun STT 联网通过
+- [ ] **J2** LLM 脚本生成适配：厂商关闭思考的参数不同;MiniMax 把 `<think>` 放进 content
+  - 做法:`OpenAiScriptGenerator` 支持合并额外请求字段;解析前剥掉 `<think>…</think>` 与代码围栏
+  - 验收：五家 LLM 各生成一份脚本并解析成功
+- [ ] **J3** Qwen TTS(DashScope 原生：返回音频 URL,需二次下载)
+- [ ] **J4** Qwen STT(DashScope 原生，词级时间戳 → 按句组装 segments)
+- [ ] **J5** 配置模块：预置 + TOML + 按 key 自动选择 + `AnyTts` / `AnyStt` / `ChatEndpoint`
+  - 验收：单元测试覆盖查找顺序、自动选择顺序、自定义 provider、缺字段报错
+- [ ] **J6** TTS 超长文本按句切分(Qwen 600 / GLM 1024 / StepFun 1000 字上限)
+  - 验收:Qwen 合成 1500 字文本成功
+- [ ] **J7** STT 超长音频按时长切分(GLM 单次 ≤30 s),时间戳按偏移拼接
+  - 验收:GLM 识别 36 s 音频成功且时间戳单调
+- [ ] **J8** CLI 接入配置:tts / stt / subtitle / podcast / episode-export;`--config`;`providers` 子命令打印解析结果
+- [ ] **J9** server 的 TTS 按配置选择 provider(无 key 时仍为 Edge)
+- [ ] **J10** 播客管线每段按峰值归一化，不同音色响度相差 6 dB(Edge 4 个中文音色实测 -15.5 ~ -21.5 LUFS)
+  - 做法：每段按 LUFS 归一到同一目标，过短片段退回峰值;整期 LUFS 归一
+  - 验收：同一实验各音色差 ≤1 dB
