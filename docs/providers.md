@@ -41,6 +41,7 @@ max_chars = 600            # 可选，单次请求最大字符数，超过自动
 
 [stt]
 provider = "glm"
+segments = "always"        # 可选:verbose_json | always | none,时间戳怎么取(仅 openai 协议)
 max_secs = 29              # 可选，单次请求最大音频时长(秒),超过自动切分;预置 glm 29、qwen 290
 
 [llm]
@@ -55,6 +56,10 @@ protocol = "openai"                    # openai | minimax | qwen | edge | eleven
 base_url = "http://127.0.0.1:8880/v1"
 api_key_env = "LOCAL_TTS_KEY"          # 可选;不填则不发送鉴权头
 ```
+
+命令行里 `--provider` / `--model` 覆盖配置(换 provider 时该节其他设置一并作废),
+`phonon providers` 打印实际解析结果。播客脚本里的 `voice_id` 属于某个厂商，换 provider 要换脚本音色。
+`phonon subtitle` 遇到不返回时间戳的 provider(StepFun)直接报错，不会写出空字幕。
 
 自定义 provider 没有默认模型和音色，需要在 `[tts]` / `[stt]` / `[llm]` 里写 `model`(TTS 还要 `voice`)。
 

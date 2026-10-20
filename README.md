@@ -130,7 +130,9 @@ Full per-tool input/output schema: [`docs/mcp-tools.md`](./docs/mcp-tools.md).
 - A C/C++ toolchain with `make` / autotools (LAME, Vorbis, and fdk-aac are built from source)
 - Linux: `libasound2-dev` and `pkg-config` (cpal, for phonon-engine / studio)
 - ffmpeg (optional, for phonon-video)
-- API keys (optional): `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `MINIMAX_API_KEY`, `REPLICATE_API_TOKEN`
+- API keys (optional): `MINIMAX_API_KEY`, `DASHSCOPE_API_KEY`, `ZHIPU_API_KEY`, `STEP_API_KEY`,
+  `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `REPLICATE_API_TOKEN` —
+  providers are chosen by config, see [docs/providers.md](./docs/providers.md)
 
 MP3 encoding statically links LAME (**LGPL-3.0**); AAC encoding is opt-in
 because libfdk-aac's license is not OSI-approved. See [`phonon-io/README.md`](./phonon-io/README.md).

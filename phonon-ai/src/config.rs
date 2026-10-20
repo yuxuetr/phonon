@@ -394,6 +394,31 @@ impl Config {
     Self::from_toml(&text)
   }
 
+  /// Override `[tts] provider` / `model` where given (e.g. from CLI flags).
+  /// A different provider replaces the whole section: model, voice and
+  /// limits configured for the old one would not fit it.
+  pub fn override_tts(&mut self, provider: Option<String>, model: Option<String>) {
+    if provider.is_some() && provider != self.tts.provider {
+      self.tts = TtsSection {
+        provider,
+        ..TtsSection::default()
+      };
+    }
+    self.tts.model = model.or(self.tts.model.take());
+  }
+
+  /// Override `[stt] provider` / `model` where given; a different provider
+  /// replaces the whole section.
+  pub fn override_stt(&mut self, provider: Option<String>, model: Option<String>) {
+    if provider.is_some() && provider != self.stt.provider {
+      self.stt = SttSection {
+        provider,
+        ..SttSection::default()
+      };
+    }
+    self.stt.model = model.or(self.stt.model.take());
+  }
+
   /// Build the configured TTS provider.
   pub fn tts(&self) -> Result<AnyTts, AiError> {
     self.tts_with(&env_var)
@@ -942,6 +967,41 @@ mod tests {
     assert_eq!(llm.client.base_url(), DASHSCOPE_COMPAT);
     // STT has no section: auto-selected by priority.
     assert_eq!(config.stt_with(&env).expect("stt").provider(), "minimax");
+  }
+
+  #[test]
+  fn test_cli_overrides() {
+    let base = Config::from_toml(
+      "[tts]\nprovider = \"qwen\"\nvoice = \"Ethan\"\nmax_chars = 50\n[stt]\nprovider = \"glm\"\nmax_secs = 10",
+    )
+    .expect("parse");
+    let env = env_of(&["DASHSCOPE_API_KEY", "STEP_API_KEY", "ZHIPU_API_KEY"]);
+
+    // Same provider: only the model changes, the rest of the section stays.
+    let mut config = base.clone();
+    config.override_tts(Some("qwen".into()), Some("qwen3-tts-x".into()));
+    let tts = config.tts_with(&env).expect("tts");
+    assert_eq!(
+      (tts.model(), tts.default_voice(), tts.max_chars()),
+      ("qwen3-tts-x", "Ethan", Some(50))
+    );
+
+    // Another provider: its own preset, not the old voice and limit.
+    let mut config = base.clone();
+    config.override_tts(Some("stepfun".into()), None);
+    config.override_stt(Some("stepfun".into()), None);
+    let tts = config.tts_with(&env).expect("tts");
+    assert_eq!(
+      (tts.provider(), tts.default_voice(), tts.max_chars()),
+      ("stepfun", "cixingnansheng", Some(1000))
+    );
+    let stt = config.stt_with(&env).expect("stt");
+    assert_eq!((stt.provider(), stt.max_secs()), ("stepfun", None));
+
+    // No flags: unchanged.
+    let mut config = base;
+    config.override_stt(None, None);
+    assert_eq!(config.stt_with(&env).expect("stt").max_secs(), Some(10));
   }
 
   #[test]

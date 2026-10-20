@@ -1,7 +1,5 @@
-use clap::{Parser, Subcommand, ValueEnum};
-use phonon_ai::{
-  EdgeTts, OpenAiTts, SttProvider, TranscribeOptions, TtsProvider, VoiceConfig, WhisperStt,
-};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use phonon_ai::{AnyStt, AnyTts, Config, SttProvider, TranscribeOptions, TtsProvider, VoiceConfig};
 use phonon_core::{FilterType, algorithms};
 use phonon_engine::AudioPlayer;
 use phonon_io::{AudioChapter, CoverArt, CoverMime, Mp3Config, PodcastTags, attach_tag};
@@ -41,8 +39,25 @@ impl From<CliFilterType> for FilterType {
 #[command(name = "phonon")]
 #[command(about = "Phonon Audio Engine CLI — audio processing, TTS, podcast generation, and more")]
 struct Cli {
+  /// Provider config file (default: $PHONON_CONFIG, ./phonon.toml,
+  /// ~/.config/phonon/config.toml). See docs/providers.md.
+  #[arg(long, global = true)]
+  config: Option<PathBuf>,
   #[command(subcommand)]
   command: Commands,
+}
+
+/// Overrides for the configured provider of one capability.
+#[derive(Args)]
+struct ProviderArgs {
+  /// Provider: a preset (minimax, qwen, glm, stepfun, openai, elevenlabs,
+  /// edge) or a `[providers.*]` name from the config. Default: config, then
+  /// the first preset whose API key is set.
+  #[arg(long)]
+  provider: Option<String>,
+  /// Model; defaults to the provider's.
+  #[arg(short, long)]
+  model: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -134,17 +149,16 @@ enum Commands {
     /// Text to synthesize
     #[arg(short, long)]
     text: String,
-    /// Voice ID (e.g. alloy, echo, nova, shimmer, fable, onyx)
-    #[arg(short, long, default_value = "alloy")]
-    voice: String,
-    /// TTS model (tts-1 or tts-1-hd)
-    #[arg(short, long, default_value = "tts-1")]
-    model: String,
+    /// Voice ID; defaults to the provider's (see `phonon providers`)
+    #[arg(short, long)]
+    voice: Option<String>,
+    #[command(flatten)]
+    provider: ProviderArgs,
     /// Output file path
     #[arg(short, long)]
     output: PathBuf,
   },
-  /// Speech-to-Text: transcribe audio using Whisper
+  /// Speech-to-Text: transcribe audio with the configured provider
   Stt {
     /// Audio file to transcribe
     #[arg(short, long)]
@@ -155,6 +169,8 @@ enum Commands {
     /// Output JSON with timestamps instead of plain text
     #[arg(long, default_value_t = false)]
     json: bool,
+    #[command(flatten)]
+    provider: ProviderArgs,
   },
   /// Generate SRT subtitles from audio
   Subtitle {
@@ -167,6 +183,8 @@ enum Commands {
     /// Language hint (e.g. "en", "zh")
     #[arg(short, long)]
     language: Option<String>,
+    #[command(flatten)]
+    provider: ProviderArgs,
   },
   /// Detect chapters in audio (via silence detection)
   #[command(allow_negative_numbers = true)]
@@ -245,6 +263,8 @@ enum Commands {
     #[arg(long)]
     chapters: Option<PathBuf>,
   },
+  /// Show which TTS / STT / LLM provider the config resolves to
+  Providers,
   /// One-shot: script -> tagged MP3 + sidecar SRT, with LUFS normalization
   #[command(allow_negative_numbers = true)]
   EpisodeExport {
@@ -254,9 +274,9 @@ enum Commands {
     /// Output MP3 path (must end in .mp3)
     #[arg(short, long)]
     output: PathBuf,
-    /// TTS provider
-    #[arg(long, value_enum, default_value_t = TtsBackend::Edge)]
-    provider: TtsBackend,
+    /// TTS provider; the script's voice ids must belong to it
+    #[command(flatten)]
+    provider: ProviderArgs,
     /// MP3 bitrate in kbps
     #[arg(long, default_value_t = 192)]
     bitrate: u32,
@@ -288,14 +308,6 @@ enum Commands {
     #[arg(long)]
     cover: Option<PathBuf>,
   },
-}
-
-#[derive(Clone, Copy, ValueEnum, Debug)]
-enum TtsBackend {
-  /// Microsoft Edge TTS — free, no API key required.
-  Edge,
-  /// OpenAI TTS — needs `OPENAI_API_KEY`.
-  Openai,
 }
 
 #[derive(Subcommand)]
@@ -342,6 +354,8 @@ enum PodcastAction {
     /// Output audio file path
     #[arg(short, long)]
     output: PathBuf,
+    #[command(flatten)]
+    provider: ProviderArgs,
   },
   /// Preview a single segment from a script
   Preview {
@@ -354,6 +368,8 @@ enum PodcastAction {
     /// Output audio file path
     #[arg(short, long)]
     output: PathBuf,
+    #[command(flatten)]
+    provider: ProviderArgs,
   },
 }
 
@@ -498,13 +514,23 @@ async fn main() -> anyhow::Result<()> {
     Commands::Tts {
       text,
       voice,
-      model,
+      provider,
       output,
     } => {
-      println!("Synthesizing with voice '{}' (model: {})...", voice, model);
-      let tts = OpenAiTts::new()?;
-      let voice_config = VoiceConfig::new(voice.clone()).with_model(model.clone());
-      let buffer = tts.synthesize(text, &voice_config).await?;
+      let tts = build_tts(cli.config.as_deref(), provider)?;
+      let voice = voice.as_deref().unwrap_or(tts.default_voice());
+      if voice.is_empty() {
+        anyhow::bail!(
+          "provider '{}' has no default voice: pass --voice or set [tts] voice",
+          tts.provider()
+        );
+      }
+      println!(
+        "Synthesizing with {} (model: {}, voice: {voice})...",
+        tts.provider(),
+        tts.model()
+      );
+      let buffer = tts.synthesize(text, &VoiceConfig::new(voice)).await?;
       phonon_io::write_audio(output, &buffer)?;
       println!(
         "Saved {:.2}s of audio → {:?}",
@@ -516,8 +542,9 @@ async fn main() -> anyhow::Result<()> {
       input,
       language,
       json,
+      provider,
     } => {
-      let stt = WhisperStt::new()?;
+      let stt = build_stt(cli.config.as_deref(), provider)?;
       let mut opts = TranscribeOptions::new();
       if let Some(lang) = language {
         opts = opts.with_language(lang);
@@ -547,8 +574,9 @@ async fn main() -> anyhow::Result<()> {
       input,
       language,
       output,
+      provider,
     } => {
-      let stt = WhisperStt::new()?;
+      let stt = build_stt(cli.config.as_deref(), provider)?;
       let mut opts = TranscribeOptions::new();
       if let Some(lang) = language {
         opts = opts.with_language(lang);
@@ -557,6 +585,14 @@ async fn main() -> anyhow::Result<()> {
       println!("Transcribing {:?}...", input);
       let input_str = input.to_string_lossy();
       let result = stt.transcribe_file(&input_str, Some(opts)).await?;
+      if result.segments.is_empty() && !result.text.trim().is_empty() {
+        anyhow::bail!(
+          "provider '{}' (model {}) returned text without timestamps; \
+           pick one with segments (see `phonon providers` / docs/providers.md)",
+          stt.provider(),
+          stt.model()
+        );
+      }
 
       segments_to_srt_file(&result.segments, output)?;
       println!(
@@ -736,21 +772,11 @@ async fn main() -> anyhow::Result<()> {
         podcast_script.speaker_names().len()
       );
 
-      // Generate the episode (audio + chapters + SRT) using the chosen TTS provider.
-      // We branch here because `PodcastPipeline<T>` is generic over the provider.
-      let mut episode = match provider {
-        TtsBackend::Edge => {
-          println!("Provider: Edge TTS (free, keyless)");
-          let pipeline = PodcastPipeline::new(EdgeTts::new());
-          pipeline.generate_episode(&podcast_script).await?
-        }
-        TtsBackend::Openai => {
-          println!("Provider: OpenAI TTS");
-          let tts = OpenAiTts::new()?;
-          let pipeline = PodcastPipeline::new(tts);
-          pipeline.generate_episode(&podcast_script).await?
-        }
-      };
+      let tts = build_tts(cli.config.as_deref(), provider)?;
+      println!("Provider: {} (model: {})", tts.provider(), tts.model());
+      let mut episode = PodcastPipeline::new(tts)
+        .generate_episode(&podcast_script)
+        .await?;
 
       if lufs.is_finite() {
         println!(
@@ -793,8 +819,38 @@ async fn main() -> anyhow::Result<()> {
         println!("Wrote SRT -> {:?}", srt_path);
       }
     }
+    Commands::Providers => {
+      let config = Config::load(cli.config.as_deref())?;
+      match config.tts() {
+        Ok(t) => println!(
+          "tts: {} (model: {}, voice: {}, max_chars: {})",
+          t.provider(),
+          or_dash(t.model()),
+          or_dash(t.default_voice()),
+          t.max_chars().map_or("-".to_string(), |n| n.to_string())
+        ),
+        Err(e) => println!("tts: unavailable: {e}"),
+      }
+      match config.stt() {
+        Ok(s) => println!(
+          "stt: {} (model: {}, max_secs: {})",
+          s.provider(),
+          s.model(),
+          s.max_secs().map_or("-".to_string(), |n| n.to_string())
+        ),
+        Err(e) => println!("stt: unavailable: {e}"),
+      }
+      match config.llm() {
+        Ok(l) => println!("llm: {} (model: {})", l.provider, l.model),
+        Err(e) => println!("llm: unavailable: {e}"),
+      }
+    }
     Commands::Podcast { action } => match action {
-      PodcastAction::Generate { script, output } => {
+      PodcastAction::Generate {
+        script,
+        output,
+        provider,
+      } => {
         println!("Loading script from {:?}...", script);
         let podcast_script = PodcastScript::from_file(script)?;
         println!(
@@ -804,10 +860,9 @@ async fn main() -> anyhow::Result<()> {
           podcast_script.speaker_names().len()
         );
 
-        let tts = OpenAiTts::new()?;
+        let tts = build_tts(cli.config.as_deref(), provider)?;
+        println!("Generating podcast with {}...", tts.provider());
         let pipeline = PodcastPipeline::new(tts);
-
-        println!("Generating podcast...");
         pipeline.generate_to_file(&podcast_script, output).await?;
         println!("Podcast saved to {:?}", output);
       }
@@ -815,9 +870,10 @@ async fn main() -> anyhow::Result<()> {
         script,
         segment,
         output,
+        provider,
       } => {
         let podcast_script = PodcastScript::from_file(script)?;
-        let tts = OpenAiTts::new()?;
+        let tts = build_tts(cli.config.as_deref(), provider)?;
         let pipeline = PodcastPipeline::new(tts);
 
         println!("Previewing segment {}...", segment);
@@ -833,6 +889,24 @@ async fn main() -> anyhow::Result<()> {
   }
 
   Ok(())
+}
+
+/// The configured TTS provider with command-line overrides applied.
+fn build_tts(config: Option<&std::path::Path>, args: &ProviderArgs) -> anyhow::Result<AnyTts> {
+  let mut config = Config::load(config)?;
+  config.override_tts(args.provider.clone(), args.model.clone());
+  Ok(config.tts()?)
+}
+
+/// The configured STT provider with command-line overrides applied.
+fn build_stt(config: Option<&std::path::Path>, args: &ProviderArgs) -> anyhow::Result<AnyStt> {
+  let mut config = Config::load(config)?;
+  config.override_stt(args.provider.clone(), args.model.clone());
+  Ok(config.stt()?)
+}
+
+fn or_dash(value: &str) -> &str {
+  if value.is_empty() { "-" } else { value }
 }
 
 /// Load a cover image from disk for embedding into a tag.

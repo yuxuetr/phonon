@@ -52,15 +52,18 @@ phonon speed --input voice.wav --output fast.wav --factor 1.25
 # 8. Convert formats (extension-driven)
 phonon convert --input voice.wav --output voice.mp3 --bitrate 192
 
-# 9. TTS via OpenAI (set OPENAI_API_KEY)
-phonon tts --text "Welcome to phonon" --voice alloy --model tts-1-hd \
-           --output hello.wav
+# 9. TTS / STT / podcast use the configured provider (docs/providers.md):
+#    phonon.toml, else the first of minimax/qwen/glm/stepfun/... whose key is set,
+#    else keyless Edge TTS. Check what resolves:
+phonon providers
+phonon tts --text "欢迎收听" --output hello.wav                  # provider's default voice
+phonon tts --text "Welcome" --provider openai --voice alloy --model tts-1-hd --output hello.wav
 
-# 10. Speech-to-text + JSON timestamps
+# 10. Speech-to-text + JSON timestamps (long audio is split per provider limit)
 phonon stt --input meeting.wav --language en --json > meeting.json
 
-# 11. Generate SRT subtitles
-phonon subtitle --input meeting.wav --output meeting.srt
+# 11. Generate SRT subtitles (needs a provider that returns timestamps)
+phonon subtitle --input meeting.wav --output meeting.srt --provider qwen
 
 # 12. Detect chapters by silence
 phonon chapters --input episode.wav --threshold-db -45 --min-silence 1.5
@@ -71,6 +74,7 @@ phonon video replace --video talk.mp4 --audio dub.wav --output dubbed.mp4
 phonon video probe   --input talk.mp4
 
 # 14. Generate or preview a podcast from a JSON script
+#     (the script's voice_ids must belong to the provider, e.g. --provider edge)
 phonon podcast generate --script ep01.json --output ep01.wav
 phonon podcast preview  --script ep01.json --segment 0 --output preview.wav
 ```
@@ -471,9 +475,10 @@ and call `synthesize` + `play` instead.
 
 - **Rust 1.85+** (2024 edition)
 - **ffmpeg / ffprobe** on `$PATH` for `phonon-video`
-- API keys (only when you use the corresponding provider):
-  - `OPENAI_API_KEY` for OpenAI TTS / Whisper STT / OpenAI script generator
-  - `ELEVENLABS_API_KEY` for ElevenLabs TTS
+- API keys (only when you use the corresponding provider; table in
+  [providers.md](./providers.md)):
+  - `MINIMAX_API_KEY`, `DASHSCOPE_API_KEY` (Qwen), `ZHIPU_API_KEY` (GLM), `STEP_API_KEY`
+    (StepFun), `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`
   - `REPLICATE_API_TOKEN` for `ReplicateSoundGen`
 - Edge TTS is free and needs no key.
 
