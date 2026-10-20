@@ -205,7 +205,8 @@
 - [x] **J7** STT 超长音频按时长切分(GLM 单次 ≤30 s),时间戳按偏移拼接
   - 验收:GLM 识别 36 s 音频成功且时间戳单调
   - DONE: GLM 36 s / Qwen 433 s 实测分段识别，时间戳单调
-- [ ] **J8** CLI 接入配置:tts / stt / subtitle / podcast / episode-export;`--config`;`providers` 子命令打印解析结果
+- [x] **J8** CLI 接入配置:tts / stt / subtitle / podcast / episode-export;`--config`;`providers` 子命令打印解析结果
+  - DONE: --config/--provider/--model + providers 子命令;实测 stepfun/qwen tts、glm 字幕、qwen episode-export
 - [ ] **J9** server 的 TTS 按配置选择 provider(无 key 时仍为 Edge)
 - [ ] **J10** 播客管线每段按峰值归一化，不同音色响度相差 6 dB(Edge 4 个中文音色实测 -15.5 ~ -21.5 LUFS)
   - 做法：每段按 LUFS 归一到同一目标，过短片段退回峰值;整期 LUFS 归一
