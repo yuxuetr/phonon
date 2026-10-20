@@ -209,6 +209,7 @@
   - DONE: --config/--provider/--model + providers 子命令;实测 stepfun/qwen tts、glm 字幕、qwen episode-export
 - [x] **J9** server 的 TTS 按配置选择 provider(无 key 时仍为 Edge)
   - DONE: 启动时解析一次，经 router state 共享;实测 qwen 配置 200,坏配置拒绝启动
-- [ ] **J10** 播客管线每段按峰值归一化，不同音色响度相差 6 dB(Edge 4 个中文音色实测 -15.5 ~ -21.5 LUFS)
+- [x] **J10** 播客管线每段按峰值归一化，不同音色响度相差 6 dB(Edge 4 个中文音色实测 -15.5 ~ -21.5 LUFS)
   - 做法：每段按 LUFS 归一到同一目标，过短片段退回峰值;整期 LUFS 归一
   - 验收：同一实验各音色差 ≤1 dB
+  - DONE: 统一到共同 LUFS(受最尖峰段 -1 dBTP 约束);Edge 4 音色实测差 0.00 dB
