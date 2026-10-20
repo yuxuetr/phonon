@@ -104,7 +104,7 @@ phonon/
 
 **已完成**: v0.1 (WAV) → v0.2 (pydub等价) → v0.3 (播客Agent) → v0.4 (STT/字幕/视频/Server) → v0.5 (sinc resampler/多格式/EffectChain/CI) → v0.6 (EQ/rayon/Studio UI/Wasm/Plugin) → **v0.7 (LUFS/MP3+FLAC+OGG tags/Pan/TTS cache/AI BGM 接管线/Episode export/MCP server)**
 
-**当前版本**: v0.7.1(评估修复,见 [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md))
+**当前版本**: v0.7.2(评估修复 v0.7.1 + 遗留项 v0.7.2,见 [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md))
 
 **phonon-core 特性**:
 - `features = ["parallel", "simd"]`(默认开启)— rayon 并行 + NEON/SSE SIMD,其他架构走标量
@@ -121,9 +121,8 @@ phonon/
 - AssetRegistry 用 UUID 句柄管理音频缓冲,LLM 永不接触 PCM 字节
 
 **下一步待做**(详见 RoadMap.md / Todos.md):
-- 发布到 crates.io(先补 CHANGELOG 与 tag)
-- async 上下文中的阻塞 DSP/编码改走 `spawn_blocking`;TTS provider 超时与重试
-- 引擎剩余实时安全问题(`append_samples` 锁内扩容、`ParametricEqPlugin` 回调内重建)
+- 发布到 crates.io(先补 tag;CHANGELOG 已有 v0.7.1 / v0.7.2 段)
+- OGG 单页损坏时 symphonia 在打开阶段即失败(上游行为)
 - AI / 管线工具下沉到下游 data-source 项目(provider 配置在调用方)
 
 ## 开发工作流
@@ -363,7 +362,7 @@ A: `phonon_core::resample()` 使用 Lanczos 窗 sinc 插值(降采样时按比�
 A: 
 - **算法层** (phonon-core): 使用 `rayon` 进行数据并行
 - **播放层** (phonon-engine): 需要独立音频线程
-- **GUI 层** (phonon-studio): 文件加载走 `spawn_blocking`;EQ / 效果 / 重采样目前仍在 UI 线程同步执行(待改)
+- **GUI 层** (phonon-studio): 文件加载、EQ / 效果、播放前重采样与波形/FFT 都走 `spawn_blocking`,UI 线程只交换 signal
 
 ### Q: 如何避免音频爆音 (Clipping)？
 A: 

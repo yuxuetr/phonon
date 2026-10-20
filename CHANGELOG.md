@@ -3,6 +3,40 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 ---
+## v0.7.2 (unreleased) — evaluation backlog
+
+Items G1–G10 in [Todos.md](./Todos.md); see `git log` for individual commits.
+
+### Breaking changes
+
+- **phonon-mcp**: `AssetRegistry::insert` returns `Result` (`McpError::RegistryFull` past a
+  1 GiB PCM cap, configurable with `AssetRegistry::with_max_bytes`); `insert_with` is removed.
+
+### Bug fixes
+
+- **Edge TTS works again**: msedge-tts 0.3 got `403 Forbidden` after the service started
+  requiring the v2 `Sec-MS-GEC` token (October 2026); upgraded to 0.4.
+- **FLAC files written by phonon now read back** with `read_audio` (STREAMINFO minimum block
+  size no longer counts the short final block, which symphonia rejected).
+- AAC: the encoder's look-ahead is flushed, so the last ~2 frames are no longer dropped.
+- `read_audio` skips packets the decoder rejects instead of failing the whole file.
+- True peak: oversampling phases sit at 0 / ¼ / ½ / ¾ sample (were offset by ⅛, reading
+  mid-sample peaks up to 0.12 dB low).
+- Engine: growing a streamed track no longer copies it under the callback's lock;
+  `ParametricEqPlugin` parameter changes keep filter state (no click, no allocation).
+- Replicate: HTTP errors from status polls and downloads are reported as such.
+- ElevenLabs: `voice_id` is percent-encoded as a single URL path segment.
+
+### Reliability and performance
+
+- Transient provider errors (network, 429, 5xx) are retried with backoff for OpenAI /
+  ElevenLabs / MiniMax / Edge synthesis and Replicate polls; MiniMax throttling codes map to
+  429; Edge TTS has a 60 s timeout; HTTP clients have a 10 s connect timeout.
+- Podcast pipeline: post-TTS processing runs on the blocking pool; assembly is linear instead
+  of quadratic; `generate_episode` synthesizes concurrently.
+- Server: WAV / MP3 encoding and LUFS measurement run on the blocking pool.
+- Studio: EQ, effects, playback resampling and waveform/FFT run off the UI thread.
+
 ## v0.7.1 (unreleased) — evaluation fixes
 
 Hand-written summary of the fixes from [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md);

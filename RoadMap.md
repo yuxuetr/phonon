@@ -26,6 +26,8 @@
 - **v0.6**: 多频段 EQ + rayon 并行 + Studio UI + Wasm + Plugin 架构
 - **v0.7**: LUFS + ID3/Vorbis 标签与章节 + Pan + TTS 缓存 + AI 资产接管线 + Episode 导出 + MCP server
 - **v0.7.1**: 评估修复(安全 / 结果正确性 / 实时安全 / 抽象收敛),见 [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md)
+- **v0.7.2**: 评估遗留(阻塞工作移出 async / UI 线程、provider 重试与超时、引擎实时安全、
+  真峰值相位、AAC 尾部、FLAC 回读、Edge TTS 恢复可用)
 
 ## v0.7 计划 — AI 播客生产就绪 + MCP 暴露
 
@@ -85,9 +87,7 @@
 
 已完成:流式 TTS、EffectChain 统一到 `DspPlugin`(v0.7.1 删除了 `AudioEffect`)、wasm-pack demo。
 
-- 发布 crates.io(先补 CHANGELOG 与 v0.6 / v0.7 tag)
-- async 上下文中的阻塞工作改走 `spawn_blocking`;TTS provider 超时 / 重试
-- 引擎剩余实时安全问题(`append_samples` 锁内扩容、`ParametricEqPlugin` 回调内重建)
+- 发布 crates.io(先补 v0.6 / v0.7 tag)
 - VST3 / CLAP 兼容层 —— v0.7.1 删除了无 FFI 的 `phonon-plugin` 骨架;
   **重估条件**:出现需要加载 Phonon 插件的真实宿主
 
