@@ -114,7 +114,7 @@
 - [x] **F14** phonon-io 编码器 feature 开关(aac 默认关)+ docs.rs 元数据 ✅ (只给 aac 加 feature;mp3/flac/ogg 暂无关闭需求,README 注明 LAME LGPL)
 - [x] **F15** 文档同步(AGENTS / README / RoadMap / CHANGELOG 0.7) ✅ (CHANGELOG 加手写 v0.7.1 段;v0.6/v0.7 tag 未打,需维护者决定发布点)
 
-## v0.7.2 — 评估遗留 (待排期)
+## v0.7.2 — 评估遗留 ✅
 
 > 来源同 [docs/evaluation-v0.7.md](./docs/evaluation-v0.7.md),v0.7.1 未覆盖的部分。
 
@@ -138,4 +138,5 @@
     未覆盖:OGG 单页 CRC 损坏会在 symphonia 打开阶段失败——**重估条件**:symphonia 的 OggReader 支持容错打开
 - [x] **G9** MCP:`AssetRegistry` 无容量上限;每个工具调用整块 clone PCM 只为构造元数据
   - DONE: 默认 1 GiB PCM 上限 + `RegistryFull`;9 处 `insert(buf.clone())` 改为 `store()` 先取元数据再 move
-- [ ] **G10** Replicate 轮询 / 下载未检查 HTTP 状态码;ElevenLabs `voice_id` 未转义直接拼进 URL
+- [x] **G10** Replicate 轮询 / 下载未检查 HTTP 状态码;ElevenLabs `voice_id` 未转义直接拼进 URL
+  - DONE: `ensure_success` 用于轮询与下载(下载也走重试);`tts_url` 以单个编码路径段放入 voice_id
