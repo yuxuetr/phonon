@@ -20,6 +20,16 @@ symphonia.workspace = true
 mp3lame-encoder.workspace = true
 flacenc.workspace = true
 vorbis_rs.workspace = true
-fdk-aac.workspace = true
+fdk-aac = { workspace = true, optional = true }
 id3.workspace = true
 metaflac.workspace = true
+
+[features]
+# AAC encoding via fdk-aac. Off by default: the bundled libfdk-aac is under
+# the Fraunhofer FDK license (not OSI-approved, with patent caveats), so
+# downstream crates must opt in explicitly. Decoding AAC (Symphonia) is
+# unaffected.
+aac = ["dep:fdk-aac"]
+
+[package.metadata.docs.rs]
+all-features = true

@@ -11,6 +11,7 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use tracing::{info, instrument};
 
+#[cfg(feature = "aac")]
 pub mod aac;
 pub mod flac;
 pub mod flac_tags;
@@ -20,6 +21,7 @@ pub mod ogg;
 pub mod ogg_tags;
 pub mod tags;
 
+#[cfg(feature = "aac")]
 pub use aac::{AacConfig, write_aac};
 pub use flac::{FlacConfig, write_flac};
 pub use flac_tags::write_flac_tagged;
@@ -171,7 +173,8 @@ pub fn read_audio<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
 /// - `.mp3` — MP3 format (192 kbps default) via LAME encoder
 /// - `.flac` — FLAC format (16-bit lossless) via flacenc
 /// - `.ogg` — OGG Vorbis format (quality 0.5 VBR) via vorbis_rs
-/// - `.aac` — AAC format (128 kbps ADTS) via fdk-aac
+/// - `.aac` — AAC format (128 kbps ADTS) via fdk-aac, only with the `aac`
+///   feature; otherwise an error
 ///
 /// # Example
 ///
@@ -183,7 +186,6 @@ pub fn read_audio<P: AsRef<Path>>(path: P) -> Result<AudioBuffer> {
 /// phonon_io::write_audio("output.mp3", &buffer).unwrap();
 /// phonon_io::write_audio("output.flac", &buffer).unwrap();
 /// phonon_io::write_audio("output.ogg", &buffer).unwrap();
-/// phonon_io::write_audio("output.aac", &buffer).unwrap();
 /// ```
 #[instrument(skip(buffer, path), fields(path = %path.as_ref().display(), duration = buffer.duration_secs()))]
 pub fn write_audio<P: AsRef<Path>>(path: P, buffer: &AudioBuffer) -> Result<()> {
@@ -203,8 +205,15 @@ pub fn write_audio<P: AsRef<Path>>(path: P, buffer: &AudioBuffer) -> Result<()> 
     "ogg" | "oga" => {
       ogg::write_ogg(path, buffer, &OggConfig::default())?;
     }
+    #[cfg(feature = "aac")]
     "aac" => {
       aac::write_aac(path, buffer, &AacConfig::default())?;
+    }
+    #[cfg(not(feature = "aac"))]
+    "aac" => {
+      return Err(PhononError::Wav(
+        "AAC encoding requires phonon-io's `aac` feature (fdk-aac, non-OSI license)".to_string(),
+      ));
     }
     other => {
       return Err(PhononError::Wav(format!(
@@ -233,6 +242,14 @@ pub fn write_mp3_with_config<P: AsRef<Path>>(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[cfg(not(feature = "aac"))]
+  #[test]
+  fn test_write_aac_without_feature_errors() {
+    let path = std::env::temp_dir().join("phonon_io_no_aac_feature.aac");
+    let err = write_audio(&path, &AudioBuffer::new(44_100, 1, 0));
+    assert!(matches!(err, Err(PhononError::Wav(msg)) if msg.contains("`aac` feature")));
+  }
 
   #[test]
   fn test_read_empty_wav_keeps_declared_format() -> Result<()> {

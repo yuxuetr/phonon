@@ -47,6 +47,8 @@ jobs:
           cargo clippy -p phonon-core --lib --no-default-features --features simd --target wasm32-unknown-unknown -- -D warnings
       - name: Execute rust tests
         run: cargo nextest run --workspace --exclude phonon-studio
+      - name: Execute phonon-io tests with the aac feature
+        run: cargo nextest run -p phonon-io --features aac
       - name: Execute doc tests
         run: cargo test --doc --workspace --exclude phonon-studio
       - name: Generate a changelog
