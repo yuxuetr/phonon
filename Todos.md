@@ -188,9 +188,10 @@
   - 做法:`OpenAiTts` 输出格式可配;`WhisperStt` 是否请求 `verbose_json` 可配，响应统一宽松解析;请求时间戳而 provider 不支持时报错
   - 验收:StepFun / GLM TTS,MiniMax / GLM / StepFun STT 联网通过
   - DONE: OpenAiTts::with_format;WhisperStt 增加 SegmentMode 与 with_path(MiniMax 路径为 speech_to_text,实测发现);联网:StepFun / GLM TTS,MiniMax / GLM / StepFun STT 通过。GLM 只有 `glm-asr` 返回时间戳,`glm-asr-2512` 只返回文本(9f874f3)
-- [ ] **J2** LLM 脚本生成适配：厂商关闭思考的参数不同;MiniMax 把 `<think>` 放进 content
+- [x] **J2** LLM 脚本生成适配：厂商关闭思考的参数不同;MiniMax 把 `<think>` 放进 content
   - 做法:`OpenAiScriptGenerator` 支持合并额外请求字段;解析前剥掉 `<think>…</think>` 与代码围栏
   - 验收：五家 LLM 各生成一份脚本并解析成功
+  - DONE: `with_extra_body` + `json_payload`(剥 `<think>` 与代码围栏);五家各生成 4 段脚本并解析成功(DeepSeek 2.2 s 最快,MiniMax 20.9 s 最慢)(280f25a)
 - [ ] **J3** Qwen TTS(DashScope 原生：返回音频 URL,需二次下载)
 - [ ] **J4** Qwen STT(DashScope 原生，词级时间戳 → 按句组装 segments)
 - [ ] **J5** 配置模块：预置 + TOML + 按 key 自动选择 + `AnyTts` / `AnyStt` / `ChatEndpoint`
