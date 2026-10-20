@@ -14,17 +14,16 @@
 use axum::{
   Router,
   body::Bytes,
-  extract::Json,
+  extract::{DefaultBodyLimit, Json},
   http::{HeaderMap, StatusCode, header},
-  response::IntoResponse,
+  response::{IntoResponse, Response},
   routing::{get, post},
 };
 use base64::Engine as _;
 use phonon_ai::{EdgeTts, TtsProvider, VoiceConfig};
 use phonon_io::{Mp3Config, PodcastTags};
-use phonon_podcast::{PodcastPipeline, PodcastScript};
+use phonon_podcast::{AssetSource, PodcastPipeline, PodcastScript};
 use serde::{Deserialize, Serialize};
-use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
@@ -54,6 +53,90 @@ struct HealthResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Request limits
+// ---------------------------------------------------------------------------
+
+/// Request bodies are capped explicitly so `/api/lufs` can accept real audio
+/// files (axum's implicit default is 2 MB) while still bounding memory.
+const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
+/// Per-text cap for `/api/tts` and for each script segment.
+const MAX_TEXT_CHARS: usize = 5_000;
+const MAX_SEGMENTS: usize = 200;
+/// Upper bound for every seconds-valued pipeline parameter (pauses, fades).
+const MAX_DURATION_PARAM_SECS: f64 = 30.0;
+const MAX_TTS_CONCURRENCY: usize = 8;
+const VALID_MP3_BITRATES: [u32; 10] = [64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+
+fn bad_request(msg: impl std::fmt::Display) -> Response {
+  (
+    StatusCode::BAD_REQUEST,
+    Json(serde_json::json!({"error": msg.to_string()})),
+  )
+    .into_response()
+}
+
+/// Validates a script received over HTTP before any work is done on it.
+///
+/// Beyond `PodcastScript::validate()`, this rejects file-path assets (the
+/// pipeline would read them from the server's filesystem and return their
+/// audio to the caller) and bounds every size/duration parameter that
+/// drives allocation.
+fn check_untrusted_script(script: &PodcastScript) -> Result<(), String> {
+  script.validate().map_err(|e| e.to_string())?;
+  if script.segments.len() > MAX_SEGMENTS {
+    return Err(format!("at most {MAX_SEGMENTS} segments are allowed"));
+  }
+  if let Some(i) = script
+    .segments
+    .iter()
+    .position(|s| s.text.chars().count() > MAX_TEXT_CHARS)
+  {
+    return Err(format!("segment {i} exceeds {MAX_TEXT_CHARS} characters"));
+  }
+
+  let cfg = &script.config;
+  for (name, asset) in [
+    ("bgm", cfg.effective_bgm()),
+    ("intro", cfg.effective_intro()),
+    ("outro", cfg.effective_outro()),
+  ] {
+    if let Some(AssetSource::File { .. }) = asset {
+      return Err(format!(
+        "{name}: file-path assets are not accepted over HTTP"
+      ));
+    }
+  }
+  if !(8_000..=192_000).contains(&cfg.output_sample_rate) {
+    return Err("output_sample_rate must be within 8000..=192000".to_string());
+  }
+  if !(1..=2).contains(&cfg.output_channels) {
+    return Err("output_channels must be 1 or 2".to_string());
+  }
+  for (name, secs) in [
+    (
+      "pause_between_segments_secs",
+      cfg.pause_between_segments_secs,
+    ),
+    ("crossfade_secs", cfg.crossfade_secs),
+    ("fade_in_secs", cfg.fade_in_secs),
+    ("fade_out_secs", cfg.fade_out_secs),
+  ] {
+    // `contains` is false for NaN, so non-finite values are rejected too.
+    if !(0.0..=MAX_DURATION_PARAM_SECS).contains(&secs) {
+      return Err(format!(
+        "{name} must be within 0..={MAX_DURATION_PARAM_SECS}"
+      ));
+    }
+  }
+  if !(1..=MAX_TTS_CONCURRENCY).contains(&cfg.tts_concurrency) {
+    return Err(format!(
+      "tts_concurrency must be within 1..={MAX_TTS_CONCURRENCY}"
+    ));
+  }
+  Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
@@ -66,6 +149,9 @@ async fn health() -> Json<HealthResponse> {
 
 async fn tts_handler(Json(req): Json<TtsRequest>) -> impl IntoResponse {
   info!(text_len = req.text.len(), voice = %req.voice, "TTS request");
+  if req.text.chars().count() > MAX_TEXT_CHARS {
+    return bad_request(format!("text exceeds {MAX_TEXT_CHARS} characters"));
+  }
 
   let tts = EdgeTts::new();
   let voice = VoiceConfig::new(&req.voice);
@@ -111,6 +197,9 @@ async fn tts_handler(Json(req): Json<TtsRequest>) -> impl IntoResponse {
 
 async fn podcast_generate_handler(Json(script): Json<PodcastScript>) -> impl IntoResponse {
   info!(title = %script.title, segments = script.segment_count(), "Podcast generation request");
+  if let Err(e) = check_untrusted_script(&script) {
+    return bad_request(e);
+  }
 
   let tts = EdgeTts::new();
   let pipeline = PodcastPipeline::new(tts);
@@ -182,6 +271,10 @@ async fn podcast_preview_handler(Json(req): Json<serde_json::Value>) -> impl Int
         .into_response();
     }
   };
+
+  if let Err(e) = check_untrusted_script(&script) {
+    return bad_request(e);
+  }
 
   let segment_index = req
     .get("segment_index")
@@ -425,6 +518,21 @@ struct EpisodeResponse {
 
 async fn podcast_episode_handler(Json(req): Json<EpisodeRequest>) -> impl IntoResponse {
   info!(title = %req.script.title, segments = req.script.segment_count(), "Episode request");
+  if let Err(e) = check_untrusted_script(&req.script) {
+    return bad_request(e);
+  }
+  let bitrate = req.bitrate_kbps.unwrap_or(192);
+  if !VALID_MP3_BITRATES.contains(&bitrate) {
+    return bad_request(format!(
+      "bitrate_kbps must be one of {VALID_MP3_BITRATES:?}"
+    ));
+  }
+  if req.lufs.is_some_and(|l| !(-70.0..=0.0).contains(&l)) {
+    return bad_request("lufs must be within -70..=0");
+  }
+  if req.true_peak.is_some_and(|tp| !(-20.0..=0.0).contains(&tp)) {
+    return bad_request("true_peak must be within -20..=0");
+  }
 
   let pipeline = PodcastPipeline::new(EdgeTts::new());
   let mut episode = match pipeline.generate_episode(&req.script).await {
@@ -439,12 +547,12 @@ async fn podcast_episode_handler(Json(req): Json<EpisodeRequest>) -> impl IntoRe
   };
 
   let lufs_after = match req.lufs {
-    Some(target) if target.is_finite() => {
+    Some(target) => {
       let tp = req.true_peak.unwrap_or(-1.0);
       phonon_core::normalize_lufs(&mut episode.audio, target, tp);
       finite(phonon_core::loudness_integrated(&episode.audio))
     }
-    _ => None,
+    None => None,
   };
 
   // Tags fall back to the script title.
@@ -462,7 +570,6 @@ async fn podcast_episode_handler(Json(req): Json<EpisodeRequest>) -> impl IntoRe
   };
   episode = episode.with_tags(tags);
 
-  let bitrate = req.bitrate_kbps.unwrap_or(192);
   let mp3_cfg = Mp3Config {
     bitrate_kbps: bitrate,
   };
@@ -528,12 +635,12 @@ fn app() -> Router {
     .route("/api/podcast/preview", post(podcast_preview_handler))
     .route("/api/lufs", post(lufs_handler))
     .route("/api/podcast/episode", post(podcast_episode_handler))
-    .layer(CorsLayer::permissive())
+    .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
     .layer(TraceLayer::new_for_http())
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> std::io::Result<()> {
   tracing_subscriber::fmt()
     .with_env_filter(
       tracing_subscriber::EnvFilter::try_from_default_env()
@@ -541,17 +648,17 @@ async fn main() {
     )
     .init();
 
-  let bind = std::env::var("PHONON_BIND").unwrap_or_else(|_| "0.0.0.0:3000".to_string());
+  // Loopback by default: the API has no authentication. Set PHONON_BIND
+  // (e.g. 0.0.0.0:3000) explicitly to expose it.
+  let bind = std::env::var("PHONON_BIND").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
 
   info!(bind = %bind, "Starting Phonon server");
 
-  let listener = tokio::net::TcpListener::bind(&bind)
-    .await
-    .expect("Failed to bind");
+  let listener = tokio::net::TcpListener::bind(&bind).await?;
 
   info!("Listening on {bind}");
 
-  axum::serve(listener, app()).await.expect("Server error");
+  axum::serve(listener, app()).await
 }
 
 #[cfg(test)]
@@ -689,6 +796,98 @@ mod tests {
       .await
       .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+  }
+
+  fn script_with_config(config: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+      "title": "t",
+      "speakers": {"host": {"voice_id": "en-US-AriaNeural"}},
+      "segments": [{"speaker": "host", "text": "hello"}],
+      "config": config,
+    })
+  }
+
+  async fn post_json(uri: &str, body: serde_json::Value) -> StatusCode {
+    app()
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri(uri)
+          .header("content-type", "application/json")
+          .body(Body::from(body.to_string()))
+          .unwrap(),
+      )
+      .await
+      .unwrap()
+      .status()
+  }
+
+  #[tokio::test]
+  async fn test_generate_rejects_file_path_assets() {
+    for config in [
+      serde_json::json!({"bgm_audio": "/etc/passwd"}),
+      serde_json::json!({"intro_audio": "/etc/passwd"}),
+      serde_json::json!({"outro": {"kind": "file", "path": "/etc/passwd"}}),
+    ] {
+      let status = post_json("/api/podcast/generate", script_with_config(config.clone())).await;
+      assert_eq!(status, StatusCode::BAD_REQUEST, "config {config}");
+    }
+  }
+
+  #[tokio::test]
+  async fn test_generate_rejects_out_of_range_config() {
+    for config in [
+      serde_json::json!({"output_sample_rate": 4_000_000_000u64}),
+      serde_json::json!({"output_channels": 0}),
+      serde_json::json!({"pause_between_segments_secs": 1.0e9}),
+      serde_json::json!({"fade_out_secs": -1.0}),
+      serde_json::json!({"tts_concurrency": 10_000}),
+    ] {
+      let status = post_json("/api/podcast/generate", script_with_config(config.clone())).await;
+      assert_eq!(status, StatusCode::BAD_REQUEST, "config {config}");
+    }
+  }
+
+  #[tokio::test]
+  async fn test_generate_rejects_invalid_script() {
+    let mut script = script_with_config(serde_json::json!({}));
+    script["segments"] = serde_json::json!([{"speaker": "nobody", "text": "hi"}]);
+    let status = post_json("/api/podcast/generate", script).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+  }
+
+  #[tokio::test]
+  async fn test_preview_rejects_file_path_assets() {
+    let body = serde_json::json!({
+      "script": script_with_config(serde_json::json!({"bgm_audio": "/etc/passwd"})),
+    });
+    assert_eq!(
+      post_json("/api/podcast/preview", body).await,
+      StatusCode::BAD_REQUEST
+    );
+  }
+
+  #[tokio::test]
+  async fn test_episode_rejects_bad_parameters() {
+    let script = script_with_config(serde_json::json!({}));
+    for extra in [
+      serde_json::json!({"bitrate_kbps": 999}),
+      serde_json::json!({"lufs": 50.0}),
+      serde_json::json!({"lufs": -16.0, "true_peak": 10.0}),
+    ] {
+      let mut body = serde_json::json!({"script": script.clone()});
+      for (k, v) in extra.as_object().unwrap() {
+        body[k] = v.clone();
+      }
+      let status = post_json("/api/podcast/episode", body).await;
+      assert_eq!(status, StatusCode::BAD_REQUEST, "extra {extra}");
+    }
+  }
+
+  #[tokio::test]
+  async fn test_tts_rejects_oversized_text() {
+    let body = serde_json::json!({"text": "a".repeat(MAX_TEXT_CHARS + 1)});
+    assert_eq!(post_json("/api/tts", body).await, StatusCode::BAD_REQUEST);
   }
 
   #[tokio::test]
