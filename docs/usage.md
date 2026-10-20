@@ -18,7 +18,6 @@ matches your situation.
 | [G. WebAssembly](#g-webassembly) | in-browser DSP |
 | [H. One-liner cookbook](#h-one-liner-cookbook) | quick reference |
 | [I. Streaming TTS playback](#i-streaming-tts-playback) | live "synthesize-and-play" |
-| [J. Plugin export (CLAP / VST3)](#j-plugin-export-clap--vst3) | DAW-loadable plugins |
 
 ---
 
@@ -220,10 +219,9 @@ Sample script (`ep01.json`):
 
 ## D. Real-time playback + plugin chain
 
-`AudioPlayer` runs an effect chain unified with the
-[`phonon_core::DspPlugin`] trait — the same plugins you can drive from
-CLI, MCP, or `phonon-plugin`'s CLAP/VST3 export. Use `add_plugin` for
-all new code (`add_effect` still works but is deprecated since v0.7.0).
+`AudioPlayer`'s effect chain is a list of [`phonon_core::DspPlugin`]s —
+the same plugins used for offline processing and in the Studio plugin
+browser. Add them with `add_plugin`.
 
 ```rust
 use phonon_core::{
@@ -465,50 +463,6 @@ Edge TTS doesn't override `synthesize_streaming` (its WebSocket-only
 SDK is sync), so it falls back to the trait default — a single chunk
 arrives once synthesis finishes. Drop the streaming code in this case
 and call `synthesize` + `play` instead.
-
----
-
-## J. Plugin export (CLAP / VST3)
-
-`phonon-plugin` is the bridge that exposes Phonon's built-in
-[`DspPlugin`](https://docs.rs/phonon-core/latest/phonon_core/trait.DspPlugin.html)s
-as DAW-loadable CLAP / VST3 plugins. The Rust-side plumbing
-(`PluginManifest`, `PluginExport`, `ExportedPlugin`) is fully wired
-and tested today. The actual `.clap` / `.vst3` binary emission is
-behind cargo features so the workspace stays buildable without the
-host SDKs.
-
-```rust
-use phonon_plugin::{ExportedPlugin, PluginExport, manifest_from_plugin};
-use phonon_core::{DspPlugin, VolumePlugin};
-
-let plug: Box<dyn DspPlugin> = Box::new(VolumePlugin::new(0.8));
-
-// 1. Pure descriptor for hosts (id / name / vendor / version / params).
-let manifest = manifest_from_plugin(plug.as_ref(), "Phonon", "Linear gain");
-assert_eq!(manifest.name, "Volume");
-assert_eq!(manifest.params[0].id, "gain");
-
-// 2. Wrapped instance the FFI factories will hand to the host.
-let mut export = ExportedPlugin::new(plug, "Phonon", "Linear gain");
-export.set_param("gain", 0.5);
-
-let mut samples = vec![1.0, -1.0];
-export.process(&mut samples, 48_000, 1);   // host's audio callback
-```
-
-Build status:
-
-| Target | Crate dep | Status |
-|---|---|---|
-| CLAP   | `clap-sys = "0.5"` (crates.io) | factory scaffold; FFI gated behind `--features clap`. |
-| VST3   | `vst3-sys` (git-only / Steinberg SDK) | factory scaffold + 16-byte class-id derivation; FFI gated behind `--features vst3`. |
-
-The build commands and install paths for each platform are in
-[`phonon-plugin/README.md`](../phonon-plugin/README.md). Once the
-feature flags wire in the SDK, the same `PluginExport` plumbing
-above feeds both formats — the audio / parameter logic stays in
-`phonon-core` and never has to be ported.
 
 ---
 

@@ -14,7 +14,6 @@
 | [G. WebAssembly](#g-webassembly) | 浏览器内 DSP |
 | [H. 一句话速查表](#h-一句话速查表) | 备忘录 |
 | [I. 流式 TTS 播放](#i-流式-tts-播放) | 边合成边播 |
-| [J. 插件出口（CLAP / VST3）](#j-插件出口clap--vst3) | 给 DAW 的可加载插件 |
 
 ---
 
@@ -217,9 +216,8 @@ async fn main() -> anyhow::Result<()> {
 
 ## D. 实时播放 + 插件链
 
-`AudioPlayer` 的效果链已经和 [`phonon_core::DspPlugin`] 完全统一 ——
-和 CLI / MCP / `phonon-plugin` 的 CLAP/VST3 出口走同一套 trait。新代码
-统一用 `add_plugin`(`add_effect` 自 v0.7.0 起 `#[deprecated]`,但兼容)。
+`AudioPlayer` 的效果链就是一组 [`phonon_core::DspPlugin`] ——
+和离线处理、Studio 插件浏览器用的是同一套插件。用 `add_plugin` 添加。
 
 ```rust
 use phonon_core::{
@@ -453,47 +451,6 @@ async fn main() -> anyhow::Result<()> {
 Edge TTS 没有重写 `synthesize_streaming`(SDK 是同步 WebSocket),会走
 trait 默认值——整段合成完毕后一次性返回单块。这种情况直接用 `synthesize`
 + `play` 即可。
-
----
-
-## J. 插件出口（CLAP / VST3）
-
-`phonon-plugin` 是把 Phonon 内置
-[`DspPlugin`](https://docs.rs/phonon-core/latest/phonon_core/trait.DspPlugin.html)
-导出成 DAW 可加载 CLAP / VST3 插件的桥。Rust 侧的桥
-(`PluginManifest`、`PluginExport`、`ExportedPlugin`)已经接好并测过;
-`.clap` / `.vst3` 二进制本体的 FFI 通过 cargo feature 隔离,默认不拉
-host SDK,workspace 在没装 SDK 的机器上也能 build。
-
-```rust
-use phonon_plugin::{ExportedPlugin, PluginExport, manifest_from_plugin};
-use phonon_core::{DspPlugin, VolumePlugin};
-
-let plug: Box<dyn DspPlugin> = Box::new(VolumePlugin::new(0.8));
-
-// 1. 给 host 看的纯描述符(id / name / vendor / version / params)。
-let manifest = manifest_from_plugin(plug.as_ref(), "Phonon", "线性增益");
-assert_eq!(manifest.name, "Volume");
-assert_eq!(manifest.params[0].id, "gain");
-
-// 2. FFI 工厂会交给 host 的封装实例。
-let mut export = ExportedPlugin::new(plug, "Phonon", "线性增益");
-export.set_param("gain", 0.5);
-
-let mut samples = vec![1.0, -1.0];
-export.process(&mut samples, 48_000, 1);   // host 的 audio callback 里调
-```
-
-构建状态:
-
-| 目标 | 依赖 | 现状 |
-|---|---|---|
-| CLAP | `clap-sys = "0.5"`(crates.io) | 工厂骨架就位;FFI 由 `--features clap` 控制。 |
-| VST3 | `vst3-sys`(git only / Steinberg SDK) | 工厂骨架 + 16-byte class id 派生就位;FFI 由 `--features vst3` 控制。 |
-
-各平台的构建命令和安装路径见
-[`phonon-plugin/README.md`](../phonon-plugin/README.md)。两种格式共用同一套
-`PluginExport` 桥,音频 / 参数逻辑全部留在 `phonon-core`,无需移植。
 
 ---
 

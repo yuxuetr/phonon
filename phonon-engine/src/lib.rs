@@ -337,17 +337,10 @@ impl AudioPlayer {
     self.state.total_samples.store(0, Ordering::SeqCst);
   }
 
-  /// Adds a real-time audio effect to the playback chain.
-  pub fn add_effect(&self, effect: Box<dyn AudioEffect>) {
-    if let Ok(mut chain) = self.state.effect_chain.lock() {
-      chain.push(effect);
-    }
-  }
-
   /// Adds a [`phonon_core::DspPlugin`] to the playback effect chain.
   pub fn add_plugin(&self, plugin: Box<dyn phonon_core::DspPlugin>) {
     if let Ok(mut chain) = self.state.effect_chain.lock() {
-      chain.push_plugin(plugin);
+      chain.push(plugin);
     }
   }
 

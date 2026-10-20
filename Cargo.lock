@@ -4244,13 +4244,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "phonon-plugin"
-version = "0.7.0"
-dependencies = [
- "phonon-core",
-]
-
-[[package]]
 name = "phonon-podcast"
 version = "0.7.0"
 dependencies = [

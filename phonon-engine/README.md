@@ -11,10 +11,8 @@ Real-time audio playback engine for the Phonon audio engine.
   an `mpsc::Receiver<AudioBuffer>` (e.g. from a TTS provider) live to
   the device
 - Sample-rate / channel conversion helpers (`stream::convert_for_device`)
-- **Real-time effects chain** unified with `phonon_core::DspPlugin`:
-  - `add_plugin(Box::new(VolumePlugin::new(0.8)))` — preferred path
-  - Inverse adapter `EffectAsPlugin` exposes any `AudioEffect` as a
-    `DspPlugin` for plugin-shaped APIs
+- **Real-time effects chain** of `phonon_core::DspPlugin`s:
+  `add_plugin(Box::new(VolumePlugin::new(0.8)))`
 
 ## Usage — basic playback
 
